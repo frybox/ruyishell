@@ -1,0 +1,9 @@
+# build artifacts
+/rysh
+/rysh.exe
+/bin/
+/dist/
+# python
+__pycache__/
+# PowerShell module cache (auto-generated)
+cmd/rysh/Microsoft/
