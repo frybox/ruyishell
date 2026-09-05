@@ -483,7 +483,7 @@ func capReport(r string) string {
 // humanDuration renders a duration as "45s" or "2m03s".
 func humanDuration(d time.Duration) string {
 	if d < time.Minute {
-		return fmt.Sprintf("%.0fs", d.Seconds())
+		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
 	m := int(d.Minutes())
 	sec := int(d.Seconds()) % 60

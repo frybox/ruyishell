@@ -300,10 +300,10 @@ func jobOutputTool(jm *JobManager) Tool {
 					head = fmt.Sprintf("job %d 已被终止", id)
 				} else {
 					code = job.ExitCode()
-					head = fmt.Sprintf("job %d 已结束 · exit %d · 耗时 %.0fs", id, code, job.Duration().Seconds())
+					head = fmt.Sprintf("job %d 已结束 · exit %d · 耗时 %.1fs", id, code, job.Duration().Seconds())
 				}
 			} else {
-				head = fmt.Sprintf("job %d 仍在运行 · 已 %.0fs · 稍后再查可见新输出", id, job.Elapsed().Seconds())
+				head = fmt.Sprintf("job %d 仍在运行 · 已 %.1fs · 稍后再查可见新输出", id, job.Elapsed().Seconds())
 			}
 			body := tailLines(job.Output(), lines)
 			if body == "" {
