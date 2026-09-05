@@ -371,7 +371,7 @@ func (s *Subagent) TerminalLine() string {
 	dur := s.durationLocked()
 	switch s.state {
 	case "done":
-		line := fmt.Sprintf("[task %d] done · %d 步 · %s", s.id, s.steps, humanDuration(dur))
+		line := fmt.Sprintf("[task %d] done · %d 步 · %s", s.id, s.steps, HumanDuration(dur))
 		if s.wrap != "" {
 			line += fmt.Sprintf(" · 被强制收尾（%s）", s.wrap)
 		}
@@ -380,9 +380,9 @@ func (s *Subagent) TerminalLine() string {
 		}
 		return line
 	case "killed":
-		return fmt.Sprintf("[task %d] 已终止 · %d 步 · %s", s.id, s.steps, humanDuration(dur))
+		return fmt.Sprintf("[task %d] 已终止 · %d 步 · %s", s.id, s.steps, HumanDuration(dur))
 	default:
-		return fmt.Sprintf("[task %d] 运行中 · %d 步 · %s", s.id, s.steps, humanDuration(time.Since(s.started)))
+		return fmt.Sprintf("[task %d] 运行中 · %d 步 · %s", s.id, s.steps, HumanDuration(time.Since(s.started)))
 	}
 }
 
@@ -408,7 +408,7 @@ func (s *Subagent) snapshotLine() string {
 		state = "已终止"
 	}
 	return fmt.Sprintf("- task %d %s: %s（第 %d 步 · %s）",
-		s.id, state, s.desc, s.steps, humanDuration(s.durationLocked()))
+		s.id, state, s.desc, s.steps, HumanDuration(s.durationLocked()))
 }
 
 // Status renders the compact state task_output feeds the manager: header
@@ -423,7 +423,7 @@ func (s *Subagent) Status() string {
 	now := time.Now()
 	switch s.state {
 	case "running":
-		head := fmt.Sprintf("[task %d] 运行中 · 第 %d 步 · 已 %s", s.id, s.steps, humanDuration(now.Sub(s.started)))
+		head := fmt.Sprintf("[task %d] 运行中 · 第 %d 步 · 已 %s", s.id, s.steps, HumanDuration(now.Sub(s.started)))
 		if s.lastTool != "" {
 			head += "\n最近动作: " + s.lastTool
 		}
@@ -438,7 +438,7 @@ func (s *Subagent) Status() string {
 		s.lastPollSteps = s.steps
 		return head
 	case "killed":
-		head := fmt.Sprintf("[task %d] 已终止 · 第 %d 步 · %s", s.id, s.steps, humanDuration(s.durationLocked()))
+		head := fmt.Sprintf("[task %d] 已终止 · 第 %d 步 · %s", s.id, s.steps, HumanDuration(s.durationLocked()))
 		if s.report != "" {
 			head += "\n── 中断时的部分报告 ──\n" + capReport(s.report)
 		} else {
@@ -447,7 +447,7 @@ func (s *Subagent) Status() string {
 		head += s.deniedLineLocked()
 		return head
 	default:
-		head := fmt.Sprintf("[task %d] 已完成 · %d 步 · %s", s.id, s.steps, humanDuration(s.durationLocked()))
+		head := fmt.Sprintf("[task %d] 已完成 · %d 步 · %s", s.id, s.steps, HumanDuration(s.durationLocked()))
 		if s.wrap != "" {
 			head += fmt.Sprintf("\n注意：该子任务被守卫强制收尾（%s），报告可疑，验收需格外严格", s.wrap)
 		}
@@ -480,8 +480,8 @@ func capReport(r string) string {
 	return truncateMid(r, taskReportHead, taskReportTail)
 }
 
-// humanDuration renders a duration as "45s" or "2m03s".
-func humanDuration(d time.Duration) string {
+// HumanDuration renders a duration as "45s" or "2m03s".
+func HumanDuration(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}

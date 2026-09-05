@@ -313,7 +313,7 @@ func RenderStateSnapshot(todos []Todo, jobs *JobManager, subs *SubagentManager) 
 					state = fmt.Sprintf("已结束 (exit %d)", j.ExitCode())
 				}
 				b.WriteString(fmt.Sprintf("- job %d %s: %s（已 %s）\n",
-					j.ID(), state, j.Command, humanDuration(j.Elapsed())))
+					j.ID(), state, j.Command, HumanDuration(j.Elapsed())))
 			}
 		}
 	}

@@ -1272,6 +1272,7 @@ func run(targetID string, startInAI bool) int {
 	// happen outside it so a slow command cannot stall the driver. Defer
 	// order matters: finalize runs before close(done) so cancelAndWait
 	// observes the settled state.
+
 	runStream = func(ctx context.Context, cancel context.CancelFunc, done chan struct{}, text string) {
 		defer cancel()
 		defer close(done)
@@ -1290,9 +1291,9 @@ func run(targetID string, startInAI bool) int {
 				return
 			}
 			d := time.Since(start)
-			line := uiT.Get("task_stats", d.String(), res.Steps, res.ToolCalls, res.PromptTokens, res.CompletionTokens)
+			line := uiT.Get("task_stats", agent.HumanDuration(d), res.Steps, res.ToolCalls, commaInt(res.PromptTokens), commaInt(res.CompletionTokens))
 			if res.CachedTokens > 0 {
-				line += uiT.Get("task_stats_cache", res.CachedTokens)
+				line += uiT.Get("task_stats_cache", commaInt(res.CachedTokens))
 			}
 			logWrite("sys", fmt.Sprintf("task:stats ms=%d rounds=%d tools=%d prompt=%d completion=%d cached=%d",
 				d.Milliseconds(), res.Steps, res.ToolCalls, res.PromptTokens, res.CompletionTokens, res.CachedTokens))
@@ -2896,4 +2897,18 @@ func restoreAll(restores []func()) {
 func crashCleanup() {
 	fmt.Fprintln(os.Stderr, "rysh: internal error; terminal restored")
 	os.Stdout.WriteString(screen.Reset() + screen.ShowCursor())
+}
+
+// commaInt renders n with thousands separators (1234567 -> "1,234,567")
+// for the task-stats footer's token counts.
+func commaInt(n int) string {
+	s := strconv.Itoa(n)
+	start := 0
+	if n < 0 {
+		start = 1 // skip the sign
+	}
+	for i := len(s) - 3; i > start; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }
