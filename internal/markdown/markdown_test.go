@@ -115,7 +115,7 @@ func TestList(t *testing.T) {
 
 func TestBlockquote(t *testing.T) {
 	got := render(t, "> quoted text\n")
-	want := dim()+">"+reset+" quoted text"+reset+"\n"
+	want := dim() + ">" + reset + " quoted text" + reset + "\n"
 	if got != want {
 		t.Errorf("blockquote = %q, want %q", got, want)
 	}
@@ -158,7 +158,7 @@ func TestFencedCode(t *testing.T) {
 func TestFencedCodeWholeChunk(t *testing.T) {
 	s := "```\ncode\n```\nback\n"
 	got := render(t, s)
-	want := codeBG()+"code"+reset+"\nback"+reset+"\n"
+	want := codeBG() + "code" + reset + "\nback" + reset + "\n"
 	if got != want {
 		t.Errorf("whole chunk = %q, want %q", got, want)
 	}

@@ -55,7 +55,7 @@ type AskRequest struct {
 // applies to workers that are already running.
 type approvalCore struct {
 	mu           sync.Mutex
-	mode         string // "ask" (default) or "auto"
+	mode         string          // "ask" (default) or "auto"
 	bashPrefixes map[string]bool // session rules: "git push" → allow
 	alwaysTools  map[string]bool // session rules: per-tool "always"
 	safeExtra    []string        // extra read-only head words treated as safe

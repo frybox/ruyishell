@@ -22,8 +22,8 @@ type RGB struct{ R, G, B uint8 }
 type Level int
 
 const (
-	LNone Level = iota
-	LBasic // 16 ANSI colors
+	LNone  Level = iota
+	LBasic       // 16 ANSI colors
 	LAnsi256
 	LTrueColor
 )
@@ -53,10 +53,10 @@ type Palette struct {
 	FGDim       RGB // faint chrome (faded labels)
 
 	// Semantic accents (content categories / state).
-	AccentUser       RGB // user turn, prompt chip
-	AccentAssistant  RGB // assistant / thinking
-	AccentTool       RGB // tool / notice lines
-	AccentSystem     RGB // system lines
+	AccentUser      RGB // user turn, prompt chip
+	AccentAssistant RGB // assistant / thinking
+	AccentTool      RGB // tool / notice lines
+	AccentSystem    RGB // system lines
 	AccentError     RGB
 	AccentSuccess   RGB
 	AccentRunning   RGB
@@ -64,19 +64,19 @@ type Palette struct {
 	AccentModel     RGB
 
 	// Prompt + chips.
-	PromptDir    RGB // prompt current-directory color
-	PromptModel  RGB // prompt model-ref color (muted)
-	PromptTag    RGB // prompt marker tag (dim)
-	ChipSH       RGB // [SH] badge background
-	ChipSHFg     RGB
-	ChipAI       RGB // [AI] badge background
-	ChipAIFg     RGB
+	PromptDir   RGB // prompt current-directory color
+	PromptModel RGB // prompt model-ref color (muted)
+	PromptTag   RGB // prompt marker tag (dim)
+	ChipSH      RGB // [SH] badge background
+	ChipSHFg    RGB
+	ChipAI      RGB // [AI] badge background
+	ChipAIFg    RGB
 
 	// Approval / status bars.
-	ApprovalBg   RGB
-	ApprovalFg   RGB
-	StatusBarBg  RGB
-	StatusBarFg  RGB
+	ApprovalBg  RGB
+	ApprovalFg  RGB
+	StatusBarBg RGB
+	StatusBarFg RGB
 
 	// Markdown.
 	CodeBG    RGB // fenced code block background
@@ -94,10 +94,10 @@ type Palette struct {
 }
 
 var (
-	current     = defaultTheme()
-	mu          sync.RWMutex
-	polarity    Polarity // PolUnknown until probed
-	forceLevel  *Level    // set by Detect override / tests
+	current    = defaultTheme()
+	mu         sync.RWMutex
+	polarity   Polarity // PolUnknown until probed
+	forceLevel *Level   // set by Detect override / tests
 )
 
 // currentLocked returns the theme for the given polarity, quantized.

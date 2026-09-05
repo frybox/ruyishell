@@ -40,7 +40,12 @@ jobs:
           for f in $TARGETS; do
             os=${f%/*}; arch=${f#*/}
             if [ $os = windows ]; then
-              (cd dist && zip -q pkg/rysh-$os-$arch.zip rysh-$os-$arch.exe checksums.txt)
+              if command -v zip >/dev/null 2>&1; then
+                (cd dist && zip -q pkg/rysh-$os-$arch.zip rysh-$os-$arch.exe checksums.txt)
+              else
+                # 7-Zip ships on the Windows runners even when Info-ZIP's zip is absent.
+                (cd dist && 7z a -tzip pkg/rysh-$os-$arch.zip rysh-$os-$arch.exe checksums.txt)
+              fi
             else
               (cd dist && tar -czf pkg/rysh-$os-$arch.tar.gz rysh-$os-$arch checksums.txt)
             fi

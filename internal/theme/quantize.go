@@ -39,7 +39,7 @@ var x256 = xterm256()
 // a perceptually-weighted squared distance (green contributes most, red next,
 // blue least).
 func nearest256(c RGB) int {
-	best, bestD := 0, 1<<31 - 1
+	best, bestD := 0, 1<<31-1
 	for i, e := range x256 {
 		d := dist(c, e)
 		if d < bestD {
