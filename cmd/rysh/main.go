@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -1278,12 +1279,12 @@ func run(targetID string, startInAI bool) int {
 		defer close(done)
 		defer finalize()
 		// Task-stats footer (M8.7): one dim system-message line, separated
-		// from the reply by a blank line, right before the fresh prompt —
-		// duration, LLM rounds, tool calls, and the token split (the
-		// cached-hit count only when the endpoint reported it). Declared
-		// after finalize and before the markdown flush so, in LIFO order,
-		// it lands after the reply's held lines and before finalize draws
-		// the prompt. Skipped when no LLM round ran (e.g. no models).
+		// from the reply by a guaranteed blank line, right before the fresh
+		// prompt — duration, LLM rounds, tool calls, and the token split
+		// (the cached-hit count only when the endpoint reported it).
+		// Declared after finalize and before the markdown flush so, in LIFO
+		// order, it lands after the reply's held lines and before finalize
+		// draws the prompt. Skipped when no LLM round ran (e.g. no models).
 		start := time.Now()
 		var res agent.RunResult
 		defer func() {
@@ -1298,19 +1299,29 @@ func run(targetID string, startInAI bool) int {
 			logWrite("sys", fmt.Sprintf("task:stats ms=%d rounds=%d tools=%d prompt=%d completion=%d cached=%d",
 				d.Milliseconds(), res.Steps, res.ToolCalls, res.PromptTokens, res.CompletionTokens, res.CachedTokens))
 			writeMu.Lock()
-			os.Stdout.WriteString("\r\n" + screen.DimGray() + line + screen.ColorReset + "\r\n")
+			// Exactly one blank line separates the footer from the reply:
+			// the markdown flush terminates the reply's last line (the
+			// stream always ends with a newline), so a single \r\n here is
+			// a genuine gap in every case. The leading ColorReset clears
+			// any SGR attribute (e.g. an open bold span) the reply's last
+			// styled line left behind, so the footer renders dim on every
+			// terminal instead of inheriting the reply's foreground.
+			os.Stdout.WriteString("\r\n" + screen.ColorReset + screen.ScreenDim() + line + screen.ColorReset + "\r\n")
 			writeMu.Unlock()
 		}()
 		// md renders the reply's markdown into styled terminal output,
 		// holding back lines with an open construct so raw markers never
 		// flash. The flush defer runs before finalize (declared after it),
 		// so a held line lands above the fresh prompt; it is task-local and
-		// single-goroutine, so it needs no lock of its own.
+		// single-goroutine, so it needs no lock of its own. The held line
+		// is the reply's last line, so the flush terminates it — the stream
+		// always ends with a newline, which is what lets the footer (and
+		// finalize) count blank-line separators reliably.
 		md := markdown.New()
 		defer func() {
 			if held := md.Close(); held != "" {
 				writeMu.Lock()
-				os.Stdout.WriteString(strings.ReplaceAll(held, "\n", "\r\n"))
+				os.Stdout.WriteString(strings.ReplaceAll(held+"\n", "\n", "\r\n"))
 				writeMu.Unlock()
 			}
 		}()
@@ -2600,7 +2611,17 @@ func (s *streamSink) OnText(delta string, reasoning bool) {
 // take (the M4 observation-line shape). It flips the status phase to "exec"
 // so the driver's ^C handler knows a foreground command owns the interrupt
 // (§8.3). The approval gate builds here with M7.4.
+//
+// For the task tool it also persists the dispatch brief (description +
+// prompt) before the worker runs: OnToolEnd's [tool] record carries only
+// the tool result, so without this line a killed or drifted worker leaves
+// no trace of the brief it was handed, and a bad brief (the manager's own
+// hallucinated search term) is impossible to diagnose. The brief is the
+// worker's only source of truth, so it belongs in the session log.
 func (s *streamSink) OnToolBegin(call provider.ToolCall) {
+	if call.Name == "task" {
+		s.logWrite("task", taskBriefLine(call.Arguments))
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	*s.aiPhase = "exec"
@@ -2627,6 +2648,25 @@ func (s *streamSink) OnToolEnd(call provider.ToolCall, res agent.Result) {
 	}
 	os.Stdout.WriteString(screen.DimGray() + "[tool] " + res.Display + screen.ColorReset + "\r\n")
 	s.logWrite("tool", agent.FedContent(call.Name, res))
+}
+
+// taskBriefLine renders one task dispatch for the session log: the
+// one-line description plus the full worker brief. Malformed arguments
+// degrade to a marker rather than a panic — the sink must never break the
+// engine's tool loop over logging.
+func taskBriefLine(argsJSON string) string {
+	var args struct {
+		Description string `json:"description"`
+		Prompt      string `json:"prompt"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "task 派遣（brief 无法解析: " + argsJSON + "）"
+	}
+	desc := strings.TrimSpace(args.Description)
+	if desc == "" {
+		desc = "（无描述）"
+	}
+	return "派遣：" + desc + "\n" + args.Prompt
 }
 
 // OnTodo prints the model-maintained task list progress line. It lands

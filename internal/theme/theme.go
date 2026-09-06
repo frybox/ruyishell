@@ -223,6 +223,10 @@ func (t *Theme) DimItalic() string {
 	return t.DimGray() + "\x1b[3m"
 }
 
+// ScreenDim is the faint chrome foreground (darker than DimGray): the
+// task-stats footer and other machine-emitted lines.
+func (t *Theme) ScreenDim() string { return t.fg(t.FGDim()) }
+
 func (t *Theme) fg(c RGB) string {
 	return sgrFg(t.level(), c)
 }

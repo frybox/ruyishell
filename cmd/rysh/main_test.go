@@ -819,3 +819,23 @@ func TestSpinnerElapsed(t *testing.T) {
 		}
 	}
 }
+
+// taskBriefLine renders the dispatch brief for the session log: a
+// one-line description over the full prompt, with malformed arguments
+// degrading to a marker instead of a panic.
+func TestTaskBriefLine(t *testing.T) {
+	got := taskBriefLine(`{"description":"查 robot","prompt":"全盘找 robot 文件。\n验收:列出命中。"}`)
+	want := "派遣：查 robot\n全盘找 robot 文件。\n验收:列出命中。"
+	if got != want {
+		t.Fatalf("taskBriefLine = %q, want %q", got, want)
+	}
+	if got := taskBriefLine(`{"description":"x","prompt":"y"}`); got != "派遣：x\ny" {
+		t.Fatalf("taskBriefLine = %q", got)
+	}
+	if got := taskBriefLine(`{"prompt":"y"}`); got != "派遣：（无描述）\ny" {
+		t.Fatalf("taskBriefLine missing description = %q", got)
+	}
+	if got := taskBriefLine(`not json`); got == "" || !strings.Contains(got, "无法解析") {
+		t.Fatalf("taskBriefLine(malformed) = %q", got)
+	}
+}

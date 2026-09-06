@@ -49,6 +49,11 @@ func DimGray() string { return theme.Current().DimGray() }
 // cue that this is thinking, not the final answer.
 func DimItalic() string { return theme.Current().DimItalic() }
 
+// ScreenDim switches to the faint chrome foreground — darker than
+// DimGray, for machine-emitted chrome lines (the task-stats footer) that
+// must read as clearly secondary to the reply.
+func ScreenDim() string { return theme.Current().ScreenDim() }
+
 // approvalStyle is the §11.3 approval row: bold black text on an amber bar,
 // so the ask prompt reads as "needs your attention" at a glance even when it
 // is buried at the end of a long reply. Like statusBarStyle it is applied

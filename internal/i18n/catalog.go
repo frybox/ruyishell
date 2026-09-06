@@ -75,7 +75,7 @@ var catalog = map[Lang]map[string]string{
 		"kill_failed":         "rysh: 未能终止进程 %d",
 		"kill_children_left":  "rysh: 进程 %d 的以下子进程未能终止: %v",
 		"killed_process":      "已终止 rysh 进程 %d",
-		"task_stats":          "本次任务：%s · %d 轮 · %d 次工具调用 · 输入 %s / 输出 %s token",
+		"task_stats":          "已完成：%s · %d 轮 · %d 次工具调用 · 输入 %s / 输出 %s token",
 		"task_stats_cache":    " · 缓存命中 %s token",
 	},
 	LangEn: {
@@ -144,7 +144,7 @@ var catalog = map[Lang]map[string]string{
 		"kill_failed":         "rysh: failed to terminate process %d",
 		"kill_children_left":  "rysh: these child processes of %d could not be terminated: %v",
 		"killed_process":      "terminated rysh process %d",
-		"task_stats":          "task: %s · %d round(s) · %d tool call(s) · %s prompt / %s completion token(s)",
+		"task_stats":          "Completed: %s · %d round(s) · %d tool call(s) · %s prompt / %s completion token(s)",
 		"task_stats_cache":    " · %s cached token(s)",
 	},
 }
