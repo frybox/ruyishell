@@ -1369,9 +1369,12 @@ func run(targetID string, startInAI bool) int {
 			base = append(base, agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: "env:\n" + env}})
 		}
 		base = append(base, agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: agent.Instructions}})
-		for _, it := range buildTimeline(trimShellEvents(events), hist) {
+		shellVerbatim, shellFolded := foldShellEvents(events)
+		for _, it := range buildTimeline(shellVerbatim, hist, shellFolded) {
 			if it.ev != nil {
 				base = append(base, agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: it.ev.Format()}})
+			} else if it.folded != "" {
+				base = append(base, agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: "以下 shell 命令较早，已折叠为一行（cwd · 命令 · 输出大小），需要细节可重跑：\n" + it.folded + "\n---\n"}})
 			} else {
 				base = append(base, it.msg.TurnMsg)
 			}
@@ -2444,19 +2447,28 @@ func chatMessages(cs []ctxMsg) []provider.ChatMessage {
 }
 
 // timelineItem is one element of the merged shell/AI context stream: either
-// a shell event (rendered as its own system message) or an AI-mode message.
+// a shell event (rendered as its own system message), a shell-fold summary
+// (the one-line placeholders for older events, emitted first), or an
+// AI-mode message.
 type timelineItem struct {
-	ev  *session.ShellEvent
-	msg *ctxMsg
+	ev     *session.ShellEvent
+	msg    *ctxMsg
+	folded string // shell-event L1 summary, "" when this is not the summary slot
 }
 
 // buildTimeline merges the shell events and the AI-mode history into one
 // chronological stream, oldest first, so commands the user ran between AI
 // turns sit between those turns instead of in a lump at the front. On equal
 // timestamps the shell event goes first (a command was entered before the
-// turn started). Both inputs are in chronological order.
-func buildTimeline(events []session.ShellEvent, hist []ctxMsg) []timelineItem {
-	items := make([]timelineItem, 0, len(events)+len(hist))
+// turn started). Both inputs are in chronological order. folded is the
+// one-line summary of the shell events older than verbatim (L1 slimming);
+// it is emitted as a single leading item so it sits before everything, in
+// the place those commands happened.
+func buildTimeline(events []session.ShellEvent, hist []ctxMsg, folded string) []timelineItem {
+	items := make([]timelineItem, 0, len(events)+len(hist)+1)
+	if folded != "" {
+		items = append(items, timelineItem{folded: folded})
+	}
 	i, j := 0, 0
 	for i < len(events) || j < len(hist) {
 		if i < len(events) && (j >= len(hist) || !events[i].Time.After(hist[j].ts)) {
@@ -2470,19 +2482,37 @@ func buildTimeline(events []session.ShellEvent, hist []ctxMsg) []timelineItem {
 	return items
 }
 
-// trimShellEvents drops the oldest shell events while their formatted total
-// exceeds the per-request byte budget (session.MaxContext), so chatty
-// commands cannot balloon the context.
-func trimShellEvents(events []session.ShellEvent) []session.ShellEvent {
+// foldShellEvents applies L1 slimming to the shell ring (the shell-event
+// twin of agent.CollapseOldTools): the newest events whose formatted total
+// fits the per-request budget (session.MaxContext) stay verbatim — the very
+// newest always does — and every older event folds to a one-line placeholder
+// (ShellEvent.Fold), so an earlier command is never silently dropped, only
+// summarized. It returns the verbatim suffix (chronological, for the
+// timeline) and the folded summary of the older prefix ("" when none).
+func foldShellEvents(events []session.ShellEvent) ([]session.ShellEvent, string) {
+	n := len(events)
+	if n == 0 {
+		return nil, ""
+	}
+	keep := 0 // index of the oldest verbatim event; 0 when the whole ring fits
 	total := 0
-	for i := range events {
-		total += len(events[i].Format())
+	for i := n - 1; i >= 0; i-- {
+		size := len(events[i].Format())
+		if i < n-1 && total+size > session.MaxContext {
+			keep = i + 1
+			break
+		}
+		total += size
 	}
-	for len(events) > 0 && total > session.MaxContext {
-		total -= len(events[0].Format())
-		events = events[1:]
+	verbatim := events[keep:]
+	if keep == 0 {
+		return verbatim, ""
 	}
-	return events
+	lines := make([]string, 0, keep)
+	for i := 0; i < keep; i++ {
+		lines = append(lines, events[i].Fold())
+	}
+	return verbatim, strings.Join(lines, "\n")
 }
 
 // trimHistory keeps only the most recent max messages, trimming whole turns

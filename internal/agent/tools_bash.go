@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"ruyishell/internal/secrets"
 )
 
 // bashTool builds the bash executor rooted at the task's default
@@ -72,6 +74,7 @@ func bashTool(cwd string, o ToolOpts) Tool {
 					body += "stderr: " + stderr
 				}
 				body = truncateMid(body, 48*1024, 16*1024)
+				body = secrets.Mask(body)
 				meta := fmt.Sprintf("exit %d · %.1fs · cwd %s", code, dur.Seconds(), dir)
 				if timedOut {
 					meta = fmt.Sprintf("exit %d · 超时（%ds）已终止 · cwd %s", code, int(timeout.Seconds()), dir)

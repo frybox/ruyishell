@@ -95,14 +95,39 @@ func TestOutputCapturedAndCapped(t *testing.T) {
 		t.Fatalf("previous event not closed on new typing: %+v", evs)
 	}
 
-	// Output is capped at MaxOutput bytes.
+	// A long stream is kept as head+tail with an elision marker: the first
+	// lines and the final result/errors survive, the middle is dropped.
 	r = New()
 	r.Type('x')
 	r.Enter("")
 	big := strings.Repeat("o", MaxOutput*2)
 	r.Output([]byte(big))
-	if evs := r.Events(); len(evs) != 1 || len(evs[0].Output) != MaxOutput {
-		t.Fatalf("output not capped: %d bytes", len(r.Events()[0].Output))
+	evs := r.Events()
+	if len(evs) != 1 {
+		t.Fatalf("want 1 event, got %d", len(evs))
+	}
+	out := evs[0].Output
+	// Head and tail each keep shellOutHalf bytes.
+	if !strings.HasPrefix(out, strings.Repeat("o", shellOutHalf)) {
+		t.Fatalf("head not kept: %q", out[:20])
+	}
+	if !strings.HasSuffix(out, strings.Repeat("o", shellOutHalf)) {
+		t.Fatalf("tail not kept: %q", out[len(out)-20:])
+	}
+	if !strings.Contains(out, "已省略") {
+		t.Fatalf("elision marker missing: %q", out)
+	}
+	// The middle is gone, so total is head+tail+marker, far below MaxOutput*2.
+	if len(out) > MaxOutput+64 {
+		t.Fatalf("output not bounded to head+tail+marker: %d bytes", len(out))
+	}
+	// A short stream is captured verbatim (no marker, no elision).
+	r = New()
+	r.Type('y')
+	r.Enter("")
+	r.Output([]byte("file1\nfile2\n"))
+	if got := r.Events()[0].Output; got != "file1\nfile2\n" {
+		t.Fatalf("short output not verbatim: %q", got)
 	}
 }
 
@@ -158,6 +183,28 @@ func TestFormatStripsANSIAndCarriesCWD(t *testing.T) {
 	}
 	if strings.Contains(f, "\x1b[") {
 		t.Fatalf("ANSI sequences leaked into context: %q", f)
+	}
+}
+
+func TestFormatMasksCredentials(t *testing.T) {
+	r := New()
+	// A credential typed into the command and one printed by it must not
+	// cross into the context verbatim.
+	for _, c := range "curl -H 'Authorization: Bearer abcdef123456'" {
+		r.Type(c)
+	}
+	r.Enter("/w")
+	r.Output([]byte("export API_KEY=sk-abcdefghijklmnop123456\n"))
+	r.Abort()
+	f := r.Events()[0].Format()
+	if strings.Contains(f, "abcdef123456") {
+		t.Fatalf("Bearer token leaked into context: %q", f)
+	}
+	if strings.Contains(f, "sk-abcdefghijklmnop123456") {
+		t.Fatalf("API key leaked into context: %q", f)
+	}
+	if !strings.Contains(f, "[已脱敏]") {
+		t.Fatalf("mask marker missing: %q", f)
 	}
 }
 

@@ -87,10 +87,12 @@ func TestBuildTimelineInterleavesChronologically(t *testing.T) {
 		{TurnMsg: agent.TurnMsg{Msg: provider.ChatMessage{Role: "user", Content: "q1"}}, ts: t0.Add(time.Millisecond)},
 		{TurnMsg: agent.TurnMsg{Msg: provider.ChatMessage{Role: "assistant", Content: "a1"}}, ts: t1},
 	}
-	items := buildTimeline(evs, hist)
+	items := buildTimeline(evs, hist, "")
 	var got []string
 	for _, it := range items {
-		if it.ev != nil {
+		if it.folded != "" {
+			got = append(got, "folded")
+		} else if it.ev != nil {
 			got = append(got, "ev:"+it.ev.Command)
 		} else {
 			got = append(got, "msg:"+it.msg.Msg.Content)
@@ -106,25 +108,55 @@ func TestBuildTimelineTieGoesToShellEvent(t *testing.T) {
 	ts := time.Now()
 	evs := []session.ShellEvent{{Dir: "/a", Command: "c", Time: ts}}
 	hist := []ctxMsg{{TurnMsg: agent.TurnMsg{Msg: provider.ChatMessage{Role: "user", Content: "q"}}, ts: ts}}
-	items := buildTimeline(evs, hist)
+	items := buildTimeline(evs, hist, "")
 	if len(items) != 2 || items[0].ev == nil || items[1].msg == nil {
 		t.Fatalf("buildTimeline tie = %+v, want the event before the turn", items)
 	}
 }
 
-func TestTrimShellEventsBudget(t *testing.T) {
-	mk := func(cmd string) session.ShellEvent {
-		return session.ShellEvent{Command: cmd, Output: strings.Repeat("o", session.MaxOutput)}
-	}
-	// Each formatted event is just over half the 8KB budget, so at most one
-	// fits; the oldest are dropped first.
-	got := trimShellEvents([]session.ShellEvent{mk("a"), mk("b"), mk("c")})
-	if len(got) != 1 || got[0].Command != "c" {
-		t.Fatalf("over budget: %+v, want only the newest event", got)
-	}
+func TestFoldShellEvents(t *testing.T) {
+	// Each event is small, so all stay verbatim and nothing folds.
 	small := []session.ShellEvent{{Command: "a"}, {Command: "b"}}
-	if g := trimShellEvents(small); len(g) != 2 {
-		t.Fatalf("under budget: dropped events: %+v", g)
+	if v, f := foldShellEvents(small); len(v) != 2 || v[0].Command != "a" || v[1].Command != "b" || f != "" {
+		t.Fatalf("under budget should keep all verbatim, got %d verbatim folded=%q", len(v), f)
+	}
+	// No events: nothing verbatim, no fold.
+	if v, f := foldShellEvents(nil); v != nil || f != "" {
+		t.Fatalf("empty ring: got %d verbatim folded=%q", len(v), f)
+	}
+	// Each event is just over half the 8KB budget, so only the newest stays
+	// verbatim; the two older ones fold to one-line placeholders that name
+	// the command and output size.
+	mk := func(cmd string) session.ShellEvent {
+		return session.ShellEvent{Dir: "/d", Command: cmd, Output: strings.Repeat("o", session.MaxOutput)}
+	}
+	gotV, gotF := foldShellEvents([]session.ShellEvent{mk("a"), mk("b"), mk("c")})
+	if len(gotV) != 1 || gotV[0].Command != "c" {
+		t.Fatalf("over budget: want only the newest verbatim, got %+v", gotV)
+	}
+	for _, wantFold := range []string{"$ a（输出 4 KB）", "$ b（输出 4 KB）"} {
+		if !strings.Contains(gotF, wantFold) {
+			t.Fatalf("folded summary missing %q: %q", wantFold, gotF)
+		}
+	}
+	if strings.Contains(gotF, "$ c") {
+		t.Fatalf("newest event must not be folded: %q", gotF)
+	}
+	// The fold never mutates the verbatim event's Output.
+	if len(gotV[0].Output) != session.MaxOutput {
+		t.Fatalf("verbatim event output changed: %d bytes", len(gotV[0].Output))
+	}
+}
+
+func TestFoldShellEventsEmittedAtTimelineHead(t *testing.T) {
+	evs := []session.ShellEvent{{Dir: "/a", Command: "c", Time: time.Now().Add(-time.Second)}}
+	hist := []ctxMsg{{TurnMsg: agent.TurnMsg{Msg: provider.ChatMessage{Role: "user", Content: "q"}}, ts: time.Now()}}
+	items := buildTimeline(evs, hist, "[shell] $ a（输出 1 KB）")
+	if len(items) != 3 {
+		t.Fatalf("want 3 items (folded + event + msg), got %d", len(items))
+	}
+	if items[0].folded == "" {
+		t.Fatalf("folded summary should be the leading item, got %+v", items[0])
 	}
 }
 

@@ -6,11 +6,15 @@
 package session
 
 import (
+	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
+
+	"ruyishell/internal/secrets"
 )
 
 // ShellEvent is one command the user ran in shell mode: the command line,
@@ -28,13 +32,21 @@ type ShellEvent struct {
 const (
 	// MaxEvents is the number of shell events retained in the ring.
 	MaxEvents = 20
-	// MaxOutput is the per-event output capture cap, in bytes.
+	// MaxOutput is the per-event output capture cap, in bytes. The cap is
+	// split between the head and the tail (each shellOutHalf): like the
+	// bash tool's truncateMid, the middle of a long stream is dropped
+	// because both ends carry the signal (the command's first lines and
+	// its final result/errors).
 	MaxOutput = 4 * 1024
 	// MaxContext is the total byte budget for the shell events sent in one
 	// request's context; when the budget is exceeded the oldest events are
-	// dropped first (they are interleaved chronologically with the AI
-	// conversation, one system message per event).
+	// collapsed to one-line placeholders (they are interleaved
+	// chronologically with the AI conversation, one system message per
+	// event), not dropped — see CollapseShellEvents.
 	MaxContext = 8 * 1024
+	// shellOutHalf is the head/tail of a shell event's output kept verbatim
+	// when the stream overruns MaxOutput (MaxOutput/2 each).
+	shellOutHalf = MaxOutput / 2
 )
 
 // Recorder assembles shell-mode keystrokes into commands and captures the
@@ -42,14 +54,21 @@ const (
 // fed from two goroutines (the input and output loops); all methods are
 // safe for concurrent use.
 type Recorder struct {
-	mu         sync.Mutex
-	events     []ShellEvent
-	line       []rune // command line currently being typed
-	cur        int    // cursor offset within line
-	curIdx     int    // index of the event capturing output, -1 when none
-	paused     bool   // true while a fullscreen program owns the terminal
-	paste      bool   // true while inside a DEC 2004 paste block (PasteStart..End)
-	unreliable bool   // the line used a readline feature the recorder cannot
+	mu     sync.Mutex
+	events []ShellEvent
+	line   []rune // command line currently being typed
+	cur    int    // cursor offset within line
+	// The open event's output stream is kept as a head+tail window so a
+	// long stream drops its middle: head holds the first shellOutHalf
+	// bytes, tail the last shellOutHalf bytes of the whole stream, and
+	// seen counts every byte fed, so the elided middle is derivable.
+	head       []byte
+	tail       []byte
+	seen       int
+	curIdx     int  // index of the event capturing output, -1 when none
+	paused     bool // true while a fullscreen program owns the terminal
+	paste      bool // true while inside a DEC 2004 paste block (PasteStart..End)
+	unreliable bool // the line used a readline feature the recorder cannot
 	// (tab completion, ↑/↓ history recall, ...), so its reconstructed text is
 	// not what the shell actually has and must not be logged as a command.
 }
@@ -330,6 +349,9 @@ func (r *Recorder) Enter(dir string) string {
 		return ""
 	}
 	r.close()
+	// The previous event's head/tail window would otherwise leak into the
+	// fresh event's first Output call.
+	r.resetOpenOutput()
 	r.events = append(r.events, ShellEvent{Dir: dir, Command: cmd, Time: time.Now()})
 	r.evict()
 	r.curIdx = len(r.events) - 1
@@ -387,9 +409,13 @@ func (r *Recorder) Resume() {
 }
 
 // Output captures a chunk of terminal output into the open event (the most
-// recently submitted command), truncated to MaxOutput. Output that arrives
-// while no command is open (the initial prompt, or echoes while typing) or
-// while paused (a fullscreen program owns the terminal) is ignored.
+// recently submitted command). The stream is kept as a head+tail window
+// (shellOutHalf each): when it overruns MaxOutput the middle is dropped and
+// an elision marker is folded in, so a long stream keeps its first lines and
+// its final result/errors (both carry the signal) instead of its head only.
+// Output that arrives while no command is open (the initial prompt, or
+// echoes while typing) or while paused (a fullscreen program owns the
+// terminal) is ignored.
 func (r *Recorder) Output(p []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -397,14 +423,55 @@ func (r *Recorder) Output(p []byte) {
 		return
 	}
 	ev := &r.events[r.curIdx]
-	room := MaxOutput - len(ev.Output)
-	if room <= 0 {
-		return
+	r.appendOut(ev, p)
+}
+
+// appendOut folds p into the open event's head+tail window. It must be
+// called with r.mu held and r.curIdx >= 0.
+func (r *Recorder) appendOut(ev *ShellEvent, p []byte) {
+	r.seen += len(p)
+	// Head: take the leading bytes until it holds shellOutHalf (once full,
+	// later bytes belong to the middle/tail, not the head).
+	if len(r.head) < shellOutHalf {
+		n := min(shellOutHalf-len(r.head), len(p))
+		r.head = append(r.head, p[:n]...)
+		p = p[n:]
 	}
-	if len(p) > room {
-		p = p[:room]
+	// Tail: append the remainder and keep only the last shellOutHalf bytes.
+	r.tail = append(r.tail, p...)
+	if len(r.tail) > shellOutHalf {
+		r.tail = r.tail[len(r.tail)-shellOutHalf:]
 	}
-	ev.Output += string(p)
+	ev.Output = r.renderOut()
+}
+
+// renderOut composes the head+tail window into the stored output, folding
+// the elided middle into one marker that names how many bytes dropped.
+func (r *Recorder) renderOut() string {
+	var b strings.Builder
+	if len(r.head) > 0 {
+		b.Write(r.head)
+	}
+	if r.seen > MaxOutput {
+		dropped := r.seen - len(r.head) - len(r.tail)
+		if dropped > 0 {
+			b.WriteString("\n[… 已省略 ")
+			b.WriteString(strconv.Itoa(dropped))
+			b.WriteString(" 字节 …]\n")
+		}
+	}
+	if len(r.tail) > 0 {
+		b.Write(r.tail)
+	}
+	return b.String()
+}
+
+// resetOpenOutput clears the head+tail window of the open event. Callers
+// must hold r.mu.
+func (r *Recorder) resetOpenOutput() {
+	r.head = nil
+	r.tail = nil
+	r.seen = 0
 }
 
 // Events returns a copy of the shell events, oldest first, including the
@@ -432,17 +499,55 @@ func (r *Recorder) evict() {
 	}
 }
 
+// Fold renders the event as the one-line placeholder used for shell events
+// older than the most recent one (L1 slimming, mirroring
+// agent.CollapseOldTools): the command and its output size stay, the output
+// body does not.
+func (e ShellEvent) Fold() string {
+	return fmt.Sprintf("[shell] cwd: %s · $ %s（输出 %s）",
+		e.Dir, strings.Join(strings.Fields(e.Command), " "), humanSize(len(e.Output)))
+}
+
+// CollapseShellEvents splits the ring into the part that stays verbatim and
+// a one-line summary of the rest (L1 slimming, the shell-event twin of
+// agent.CollapseOldTools): the single most recent event — the one the user
+// is most likely asking about — is returned verbatim, while every older
+// event is folded to a placeholder line joined by newlines. Older commands
+// stay addressable (cwd + command + output size) instead of being dropped,
+// so the context is bounded yet nothing silently vanishes.
+func CollapseShellEvents(events []ShellEvent) ([]ShellEvent, string) {
+	if len(events) == 0 {
+		return nil, ""
+	}
+	folded := make([]string, 0, len(events)-1)
+	for i := 0; i < len(events)-1; i++ {
+		folded = append(folded, events[i].Fold())
+	}
+	return []ShellEvent{events[len(events)-1]}, strings.Join(folded, "\n")
+}
+
+// humanSize formats a byte count as B or KB for the fold placeholder line.
+func humanSize(n int) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	return fmt.Sprintf("%d KB", (n+1023)/1024)
+}
+
 // Format renders the event as the compact system message it is sent to the
 // model as: the event's cwd, the command, and its output, terminated by a
 // separator line. ANSI escape sequences and leading/trailing whitespace are
-// stripped so prompts and cursor movement do not pollute the context.
+// stripped so prompts and cursor movement do not pollute the context, and
+// the command and output are run through secrets.Mask so a credential the
+// user typed or a key a command printed does not cross into the model.
 func (e ShellEvent) Format() string {
 	out := strings.TrimSpace(stripANSI(e.Output))
+	out = secrets.Mask(out)
 	var b strings.Builder
 	if e.Dir != "" {
 		b.WriteString("cwd: " + e.Dir + "\n")
 	}
-	b.WriteString("$ " + strings.TrimSpace(e.Command) + "\n")
+	b.WriteString("$ " + strings.TrimSpace(secrets.Mask(e.Command)) + "\n")
 	if out != "" {
 		b.WriteString(out + "\n")
 	}
