@@ -798,20 +798,23 @@ func TestRenderUnifiedReplayMoreMarkerAndPrefix(t *testing.T) {
 	}
 }
 
-// The spinner's elapsed wait is grok-style: whole seconds below a minute,
-// then minutes and seconds (1m56s).
+// The spinner's elapsed wait is grok-style: seconds to a tenth below a
+// minute (0.3s, 1.5s), then minutes and tenths (1m56.3s).
 func TestSpinnerElapsed(t *testing.T) {
 	cases := []struct {
 		d    time.Duration
 		want string
 	}{
-		{0, "0s"},
-		{999 * time.Millisecond, "0s"},
-		{time.Second, "1s"},
-		{59 * time.Second, "59s"},
-		{60 * time.Second, "1m0s"},
-		{116 * time.Second, "1m56s"},
-		{3661 * time.Second, "61m1s"},
+		{0, "0.0s"},
+		{300 * time.Millisecond, "0.3s"},
+		{999 * time.Millisecond, "0.9s"},
+		{time.Second, "1.0s"},
+		{1500 * time.Millisecond, "1.5s"},
+		{59 * time.Second, "59.0s"},
+		{59900 * time.Millisecond, "59.9s"},
+		{60 * time.Second, "1m0.0s"},
+		{116300 * time.Millisecond, "1m56.3s"},
+		{3661 * time.Second, "61m1.0s"},
 	}
 	for _, c := range cases {
 		if got := spinnerElapsed(c.d); got != c.want {

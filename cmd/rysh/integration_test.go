@@ -1836,10 +1836,10 @@ id = "llama3.1:8b"
 }
 
 // Scenario G” (elapsed): the pre-output spinner's caption carries a
-// grok-style elapsed counter that counts the wait for the first token
-// (1s, 2s, 1m56s). The mock holds the token just over two seconds, so the
-// counter is guaranteed to cross two seconds on screen before the answer
-// lands and erases the spinner.
+// grok-style elapsed counter to a tenth of a second that counts the wait
+// for the first token (0.3s, 1.5s, 1m56.3s). The mock holds the token just
+// over two seconds, so the counter is guaranteed to cross two seconds on
+// screen before the answer lands and erases the spinner.
 func TestAISpinnerElapsed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
@@ -1877,9 +1877,10 @@ id = "llama3.1:8b"
 
 	p.Write([]byte("count it\r"))
 	r.readUntil(t, "正在思考", waitTimeout)
-	// The ticker rewrites the whole spinner row every 250ms, so once the
-	// wait crosses two seconds the row carries "正在思考... 2s".
-	r.readUntil(t, "正在思考... 2s", waitTimeout)
+	// The ticker rewrites the whole spinner row every 100ms, so once the
+	// wait crosses two seconds the row carries "正在思考... 2." for the
+	// remainder of the hold (2.0s through 2.9s).
+	r.readUntil(t, "正在思考... 2.", waitTimeout)
 	out := r.readUntil(t, "counted", waitTimeout)
 	assertContains(t, out, "counted")
 }

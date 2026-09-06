@@ -34,7 +34,7 @@ import (
 )
 
 // spinnerFrames is the braille spinner cycled inline on the last line of the
-// stream while a task waits for its first token (one frame per 250ms tick).
+// stream while a task waits for its first token (one frame per 100ms tick).
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 // uiT is the active UI translator, set from [tui] locale (plus the LANG
@@ -42,14 +42,15 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 // environment alone before dispatching.
 var uiT i18n.T
 
-// spinnerElapsed formats the spinner's elapsed wait grok-style: whole
-// seconds below a minute (1s, 2s), then minutes and seconds (1m56s).
+// spinnerElapsed formats the spinner's elapsed wait grok-style: seconds to
+// a tenth below a minute (0.3s, 1.5s), then minutes and tenths (1m56.3s).
 func spinnerElapsed(d time.Duration) string {
-	s := int(d / time.Second)
-	if s < 60 {
-		return fmt.Sprintf("%ds", s)
+	tenths := int(d / (100 * time.Millisecond))
+	if tenths < 600 {
+		return fmt.Sprintf("%d.%ds", tenths/10, tenths%10)
 	}
-	return fmt.Sprintf("%dm%ds", s/60, s%60)
+	mins, rest := tenths/600, tenths%600
+	return fmt.Sprintf("%dm%d.%ds", mins, rest/10, rest%10)
 }
 
 // maxPending bounds how much shell output is buffered while AI mode defers
@@ -487,7 +488,7 @@ func run(targetID string, startInAI bool) int {
 
 	// spinnerLineLocked formats the pre-output spinner row: the current
 	// frame, the task caption, and the elapsed time since the spinner was
-	// armed (1s, 2s, 1m56s). writeMu must be held by the caller.
+	// armed (0.3s, 1.5s, 1m56.3s). writeMu must be held by the caller.
 	spinnerLineLocked := func() string {
 		return "\r" + screen.EraseToEOL() + screen.DimGray() +
 			spinnerFrames[spinIdx%len(spinnerFrames)] + " " + preOutputLabel + " " +
@@ -1626,11 +1627,11 @@ func run(targetID string, startInAI bool) int {
 
 	// Spinner ticker: while the inline pre-output spinner is armed — a
 	// streaming task waiting for its first token, or the shell still
-	// booting — advance its frame every 250ms so the wait is visible on
-	// the line where output will land, counting up (1s, 2s, 1m56s). On
-	// the main screen there is no status row to repaint, so nothing else
-	// runs here.
-	tick := time.NewTicker(250 * time.Millisecond)
+	// booting — advance its frame every 100ms so the tenth-of-a-second
+	// wait readout rolls smoothly on the line where output will land,
+	// counting up (0.3s, 1.5s, 1m56.3s). On the main screen there is no
+	// status row to repaint, so nothing else runs here.
+	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	go func() {
 		for range tick.C {
