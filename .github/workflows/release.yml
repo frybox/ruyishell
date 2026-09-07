@@ -74,16 +74,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           VER=${GITHUB_REF#refs/tags/}
           cp scripts/install.sh dist/install.sh
+          # Notes go through a file: gh does not expand $VAR inside --notes (it is
+          # double-quoted in YAML). printf (not a heredoc) so the block-scalar
+          # indentation rules stay simple.
+          printf '%s\n' \
+            'ruyishell — prebuilt binaries for macOS / Linux / Windows.' \
+            '' \
+            'macOS / Linux:' \
+            '' \
+            '    curl -fsSL https://github.com/frybox/ruyishell/releases/latest/download/install.sh | bash' \
+            '' \
+            'Windows: download the zip for your CPU architecture and put rysh.exe on your PATH.' \
+            > /tmp/notes.md
           gh release create "$VER" \
             --title "ruyishell $VER" \
-            --notes "ruyishell $VER — prebuilt binaries for macOS / Linux / Windows.
-
-            macOS / Linux:
-
-                curl -fsSL https://github.com/${GITHUB_REPOSITORY_OWNER,,}/ruyishell/releases/latest/download/install.sh | bash
-
-            Windows: download the zip for your CPU architecture and put rysh.exe on your PATH." \
-            --verify \
+            --notes-file /tmp/notes.md \
             dist/rysh-*.tar.gz dist/rysh-*.zip dist/install.sh
