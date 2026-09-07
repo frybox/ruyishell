@@ -29,8 +29,8 @@ const (
 	// ActionSubmit means Enter was pressed with a non-empty draft; the
 	// driver runs the submitted text.
 	ActionSubmit
-	// ActionCancel means ^C was pressed while a task is streaming; the
-	// driver aborts the in-flight request.
+	// ActionCancel means ^C or Esc was pressed while a task is streaming;
+	// the driver aborts the in-flight request.
 	ActionCancel
 	// ActionLeave means the user wants to return to shell mode.
 	ActionLeave
@@ -232,9 +232,11 @@ func (m *Model) Remember(text string) {
 }
 
 // HandleKey routes one AI-mode key event and returns what the driver must
-// do. While streaming, only ^C (cancel) is honored — plus y/n/a when an
-// approval prompt is pending (§7.3); the mode-switch key is
-// locked and every other key is ignored so the draft cannot be disturbed.
+// do. While streaming, ^C and Esc cancel the in-flight task (Esc matches
+// the convention in pi/codex/grok, where a bare Esc interrupts the turn);
+// plus y/n/a when an approval prompt is pending (§7.3); the mode-switch key
+// is locked and every other key is ignored so the draft cannot be
+// disturbed.
 // Otherwise Enter submits a non-empty draft, the mode-switch key (Shift+Tab
 // by default, or a leading space on an empty draft) leaves AI mode, Esc
 // with a draft clears it (undoable), ↑/Ctrl-P and ↓/Ctrl-N walk the
@@ -246,7 +248,8 @@ func (m *Model) Remember(text string) {
 // nothing do not force a redraw.
 func (m *Model) HandleKey(ev keys.Event) Action {
 	if m.streaming {
-		if ev.Kind == keys.Other && len(ev.Raw) == 1 && ev.Raw[0] == 0x03 {
+		if ev.Kind == keys.Esc ||
+			(ev.Kind == keys.Other && len(ev.Raw) == 1 && ev.Raw[0] == 0x03) {
 			return ActionCancel
 		}
 		// §7.3: an open approval prompt lets exactly the three answer

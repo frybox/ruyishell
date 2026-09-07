@@ -386,6 +386,14 @@ func TestStreamingLock(t *testing.T) {
 	if act := m.HandleKey(keys.Event{Kind: keys.Other, Raw: []byte{0x03}}); act != ActionCancel {
 		t.Fatalf("^C during streaming = %v, want ActionCancel", act)
 	}
+	// A bare Esc also cancels (pi/codex/grok convention); the draft is
+	// never touched either way.
+	if act := m.HandleKey(keys.Event{Kind: keys.Esc}); act != ActionCancel {
+		t.Fatalf("Esc during streaming = %v, want ActionCancel", act)
+	}
+	if got := m.Draft(); got != "hello" {
+		t.Fatalf("draft changed by cancel keys: %q", got)
+	}
 	// After EndStream the editor accepts input again.
 	m.EndStream()
 	typed(t, m, "a")
