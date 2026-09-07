@@ -1962,7 +1962,10 @@ mainloop:
 			}
 			// Shell mode. fwdSinceNewline is true while the user has typed
 			// since the shell's last newline, so a space is forwarded, not
-			// a mode switch.
+			// a mode switch. When the shell is not in the foreground (!fg) a
+			// space is likewise literal: it belongs to the child that owns
+			// the terminal (a pager, an interactive program), so the state
+			// machine treats it as a forwarded rune, never a switch.
 			fwdSinceNewline := fwdEpoch.Load() == nlEpoch.Load()
 			fs := fullscreenApp.Load()
 			// fg is live: the shell owns the pty's foreground process
@@ -1972,7 +1975,11 @@ mainloop:
 			// alternate-screen flag alone would miss foreground programs
 			// that never enter the alternate screen.
 			fg := !fs && shellInForeground(p.Fd(), c.Process.Pid)
-			isSwitch := ev.Kind == keys.CtrlTab || (ev.Kind == keys.Rune && ev.R == ' ' && !fwdSinceNewline && !rec.InPaste())
+			// The fresh-prompt space gesture only applies when the shell itself
+			// owns the keyboard (fg): while a foreground child runs (less, ssh,
+			// an interactive program) a space belongs to that child, so it is
+			// forwarded, never interpreted as a mode switch.
+			isSwitch := ev.Kind == keys.CtrlTab || (ev.Kind == keys.Rune && ev.R == ' ' && fg && !fwdSinceNewline && !rec.InPaste())
 			// On Windows the foreground process group is not detectable, so fg
 			// falls back to "not in the alternate screen". There a fresh prompt
 			// (fwdSinceNewline false) always allows the switch so a stale
@@ -1987,8 +1994,10 @@ mainloop:
 			// capture opens before the shell runs the submitted command.
 			// While a foreground child owns the terminal (!fg), the
 			// keystrokes go to it instead of the shell's line editor, so
-			// they are not recorded.
-			res := st.Handle(ev, fwdSinceNewline || rec.InPaste())
+			// they are not recorded. The !fg also feeds the state machine
+			// (see the fwdSinceNewline note above) so a space reaches the
+			// child as a literal rather than switching modes.
+			res := st.Handle(ev, fwdSinceNewline || rec.InPaste() || !fg)
 			if res.ModeChanged {
 				enterAI()
 				continue

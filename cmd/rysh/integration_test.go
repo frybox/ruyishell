@@ -3053,11 +3053,17 @@ echo FAKEPROG_DONE
 		t.Fatalf("mode switched to AI while a foreground program runs: %q", locked)
 	}
 
-	// The fresh-prompt space gesture is refused the same way.
+	// A space while the child runs is forwarded to the child (a pager
+	// page-turn, an interactive program's input), never interpreted as the
+	// fresh-prompt mode-switch gesture: no notice, no AI prompt. The child's
+	// line read swallows it and the following newline completes the line.
 	p.Write([]byte(" "))
-	locked = r.readUntil(t, "无法切换模式", waitTimeout)
-	if strings.Contains(locked, "\x1b[35m[AI]:") {
-		t.Fatalf("space switched to AI while a foreground program runs: %q", locked)
+	quiet := r.readQuiet(t, settle, waitTimeout)
+	if strings.Contains(quiet, "无法切换模式") {
+		t.Fatalf("space while a foreground program runs printed the switch notice: %q", quiet)
+	}
+	if strings.Contains(quiet, "\x1b[35m[AI]:") {
+		t.Fatalf("space switched to AI while a foreground program runs: %q", quiet)
 	}
 
 	// When the child exits the shell is back in the foreground and
