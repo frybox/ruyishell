@@ -148,6 +148,12 @@ api = "openai-completions"
 api_key = "$MY_API_KEY" # env-var reference, not stored in plaintext
 ```
 
+The `api` field selects the wire protocol the client speaks to that provider (a per-model `api` overrides the provider's value). Three are supported:
+
+- `openai-completions` (default) — OpenAI-compatible chat completions, `POST {base_url}/chat/completions`. This is the shape most OpenAI-compatible endpoints (OpenAI, DeepSeek, Qwen, Kimi, GLM, Grok, Mistral, Ollama, local llama-server, …) expose; no `api` value is needed to use them.
+- `openai-responses` — the OpenAI Responses API, `POST {base_url}/responses`. Set `base_url` to the API root (e.g. `https://api.openai.com/v1`); `max_tokens` (the model's `max_tokens`) is sent as `max_output_tokens`.
+- `anthropic-messages` — the Anthropic Messages API, `POST {base_url}/v1/messages` with `anthropic-version` and the key sent as `x-api-key`. Set `base_url` to the API root (e.g. `https://api.anthropic.com`). The Messages API requires a `max_tokens` cap: it is taken from the model's `max_tokens`; if unset, ruyishell defaults to `4096`.
+
 Models are referenced as `provider/model` (e.g. `ollama/qwen2.5-coder:7b`). Keys may reference environment variables via `$VAR` / `${VAR}` (`$$` escapes a literal `$`). **Every `/model` re-reads the config file directly**: after editing `config.toml` and saving, no ruyishell restart is needed — the next `/model` picks it up (following pi's `/model` usage). `/model` with no argument lists all available models as a numbered list (the current model's line starts with `>`, consistent with the session list); `/model <number>` or `/model <provider/model>` switches. A model may set `tools = false` to disable native function calling (on by default). When off, that model answers in plain text without executing any tool; if the server returns 400 for the `tools` parameter, the model is treated as not supporting function calling and the AI task fails with a clear error — there is no fallback that executes markdown code blocks (a model without tool support is a question-answering model, not an agent brain).
 
 ### Default shell

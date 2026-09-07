@@ -1391,7 +1391,7 @@ func run(targetID string, startInAI bool) int {
 				base = append(base, it.msg.TurnMsg)
 			}
 		}
-		client := provider.NewOpenAIClient(spec)
+		client := provider.NewClient(spec)
 		sink := &streamSink{
 			writeMu:      &writeMu,
 			md:           md,

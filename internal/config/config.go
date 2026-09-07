@@ -36,7 +36,7 @@ type Model struct {
 type Provider struct {
 	Name    string            `toml:"name"`
 	BaseURL string            `toml:"base_url"`
-	API     string            `toml:"api"`     // e.g. "openai-completions"
+	API     string            `toml:"api"`     // "openai-completions" (default), "openai-responses" or "anthropic-messages"
 	APIKey  string            `toml:"api_key"` // literal or $ENV_VAR reference
 	Headers map[string]string `toml:"headers"`
 	Models  []Model           `toml:"models"`

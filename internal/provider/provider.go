@@ -1,10 +1,12 @@
 // Package provider turns a parsed config into usable provider/model bindings
-// and provides the first client implementation (OpenAI-compatible chat
-// completions). A model is referenced as "provider/model", matching pi's
-// /model usage.
+// and provides streaming chat clients for the wire APIs ruyishell can talk
+// to: OpenAI-compatible chat completions (default), OpenAI Responses and
+// Anthropic Messages. A model is referenced as "provider/model", matching
+// pi's /model usage; the per-model api field selects the wire client.
 package provider
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,13 +16,14 @@ import (
 
 // Spec is a resolved, ready-to-use provider/model binding.
 type Spec struct {
-	Provider string // provider id
-	Name     string // provider display name (falls back to id)
-	API      string // API type, e.g. "openai-completions"
-	BaseURL  string
-	APIKey   string
-	Headers  map[string]string
-	Model    config.Model
+	Provider  string // provider id
+	Name      string // provider display name (falls back to id)
+	API       string // API type: "openai-completions", "openai-responses" or "anthropic-messages"
+	BaseURL   string
+	APIKey    string
+	Headers   map[string]string
+	MaxTokens int // model max-tokens cap (used by APIs that require it, e.g. Anthropic)
+	Model     config.Model
 }
 
 // Ref returns the "provider/model" reference for the spec.
@@ -96,13 +99,14 @@ func buildSpec(provID string, p *config.Provider, m config.Model) (*Spec, error)
 		base = m.BaseURL
 	}
 	spec := &Spec{
-		Provider: provID,
-		Name:     m.Name,
-		API:      api,
-		BaseURL:  base,
-		APIKey:   key,
-		Headers:  mergeHeaders(p.Headers, m.Headers),
-		Model:    m,
+		Provider:  provID,
+		Name:      m.Name,
+		API:       api,
+		BaseURL:   base,
+		APIKey:    key,
+		Headers:   mergeHeaders(p.Headers, m.Headers),
+		MaxTokens: m.MaxTokens,
+		Model:     m,
 	}
 	if spec.Name == "" {
 		spec.Name = m.ID
@@ -119,6 +123,24 @@ func splitRef(ref string) (string, string, error) {
 		return "", "", fmt.Errorf("model reference must be %q, got %q", "provider/model", ref)
 	}
 	return prov, model, nil
+}
+
+// NewClient returns the streaming client bound to the spec's API type
+// (spec.API): "openai-completions" (default), "openai-responses" or
+// "anthropic-messages". The engine consumes the returned client through the
+// agent.StreamClient interface, so the concrete type is unimportant to
+// callers — they only see ChatStream.
+func NewClient(spec *Spec) interface {
+	ChatStream(ctx context.Context, messages []ChatMessage, opts ...ChatOption) (<-chan StreamToken, error)
+} {
+	switch spec.API {
+	case "openai-responses":
+		return NewResponsesClient(spec)
+	case "anthropic-messages":
+		return NewAnthropicClient(spec)
+	default: // "openai-completions", "" or any legacy value
+		return NewOpenAIClient(spec)
+	}
 }
 
 func mergeHeaders(a, b map[string]string) map[string]string {

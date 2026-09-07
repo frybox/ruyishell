@@ -130,7 +130,7 @@ func chatOnce(text string) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	client := provider.NewOpenAIClient(spec)
+	client := provider.NewClient(spec)
 	ch, err := client.ChatStream(ctx, messages)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rysh: "+err.Error())

@@ -148,6 +148,12 @@ api = "openai-completions"
 api_key = "$MY_API_KEY" # 环境变量引用，不落盘明文
 ```
 
+`api` 字段决定客户端与该 provider 通信的协议（每个 model 的 `api` 可覆盖 provider 级取值），支持三种：
+
+- `openai-completions`（缺省）— OpenAI 兼容 chat completions，`POST {base_url}/chat/completions`。绝大多数 OpenAI 兼容端点（OpenAI、DeepSeek、Qwen、Kimi、GLM、Grok、Mistral、Ollama、本地 llama-server 等）都是这个形状；使用它们无需设置 `api`。
+- `openai-responses` — OpenAI Responses API，`POST {base_url}/responses`。`base_url` 指向 API 根（如 `https://api.openai.com/v1`）；模型 `max_tokens` 会作为 `max_output_tokens` 发送。
+- `anthropic-messages` — Anthropic Messages API，`POST {base_url}/v1/messages`，带 `anthropic-version` 头、密钥走 `x-api-key`。`base_url` 指向 API 根（如 `https://api.anthropic.com`）。Messages API 要求 `max_tokens` 上限：取模型 `max_tokens`，缺省时 ruyishell 默认 `4096`。
+
 模型以 `provider/model` 引用（如 `ollama/qwen2.5-coder:7b`）。密钥可用 `$VAR` / `${VAR}` 引用环境变量（`$$` 转义字面 `$`）。**每次 `/model` 都直接重新读取配置文件**：编辑 `config.toml` 保存后无需重启 ruyishell，下一次 `/model` 即生效（参考 pi 的 `/model` 用法）。无参数 `/model` 以编号列表展示全部可用模型（当前模型行首标 `>`，与会话列表一致）；`/model <编号>` 或 `/model <provider/model>` 切换。模型可设 `tools = false` 关闭原生 function calling（缺省开启）。关闭时该模型只做纯文本回答、不执行任何工具；若服务端因 `tools` 参数返回 400，则视该模型不支持 function calling，AI 任务以明确报错结束——没有执行 markdown 代码块的兜底（不支持工具调用的模型只能做问答，不适合当智能体大脑）。
 
 ### 默认 shell
