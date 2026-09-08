@@ -83,6 +83,25 @@ jobs:
           printf '%s\n' \
             'ruyishell — prebuilt binaries for macOS / Linux / Windows.' \
             '' \
+            "## What's new in v0.1.4" \
+            '' \
+            '**Features**' \
+            '- Provider: `openai-responses` and `anthropic-messages` wire APIs. `NewClient`' \
+            '  picks the streaming client by `spec.API` (default remains' \
+            '  `openai-completions`); native wire clients for OpenAI Responses SSE and' \
+            '  Anthropic Messages SSE (x-api-key + anthropic-version). `Spec.MaxTokens`' \
+            '  plumbed through (Anthropic requires max_tokens; defaults to 4096).' \
+            '- AI UI: Esc cancels the in-flight task while streaming (matches the' \
+            '  pi/codex/grok convention); non-streaming Esc still clears the draft' \
+            '  (undoable).' \
+            '' \
+            '**Fixes**' \
+            '- Shell: a space key while a foreground child runs (pager, ssh, interactive' \
+            '  program) is forwarded to the child as literal input, no longer read as the' \
+            '  fresh-prompt mode-switch gesture.' \
+            '' \
+            '## Install' \
+            '' \
             'macOS / Linux:' \
             '' \
             '    curl -fsSL https://github.com/frybox/ruyishell/releases/latest/download/install.sh | bash' \
