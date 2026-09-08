@@ -89,7 +89,7 @@ jobs:
             '- Agent: subagent briefs actually reach the worker now. `Spawn` took the' \
             '  brief argument but dropped it, so every worker started with an empty' \
             '  task and wandered ("subagents always drift"). Regression guard added:' \
-            '  the brief text must appear in the worker\'s first request.' \
+            "  the brief text must appear in the worker's first request." \
             '' \
             '## Install' \
             '' \
