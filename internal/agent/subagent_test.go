@@ -109,6 +109,40 @@ func TestSubagentLifecycle(t *testing.T) {
 	}
 }
 
+// TestSubagentBriefDelivery is the regression guard for the brief being
+// dropped on the way: Spawn's brief must arrive as the worker's first user
+// message. Before the fix the worker started with an empty prompt and
+// "wandered" (exploring cwd with no mission); no test asserted the
+// delivery, so the loss stayed green.
+func TestSubagentBriefDelivery(t *testing.T) {
+	const marker = "任务简报-唯一标记-BRIEFMARK"
+	worker := &mockClient{t: t}
+	worker.rounds = []scriptRound{
+		func(n int, req []provider.ChatMessage, o *provider.ChatOptions) (string, []provider.ToolCall, *provider.Usage, error) {
+			return "报告：收到", nil, nil, nil
+		},
+	}
+	sm := NewSubagentManager()
+	id, err := sm.Spawn("简报投递", marker, subagentSnap(worker, t.TempDir()))
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	<-sm.Get(id).Wait()
+	reqs := worker.requests()
+	if len(reqs) == 0 {
+		t.Fatal("no worker request captured")
+	}
+	found := false
+	for _, m := range reqs[0] {
+		if m.Role == "user" && strings.Contains(m.Content, marker) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("brief missing from the worker's first request:\n%s", flattenReqs(reqs[0]))
+	}
+}
+
 // flattenReqs renders a request view for substring assertions.
 func flattenReqs(reqs []provider.ChatMessage) string {
 	var b strings.Builder

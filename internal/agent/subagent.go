@@ -82,7 +82,7 @@ func (m *SubagentManager) Spawn(desc, brief string, snap SubagentSnapshot) (int,
 	m.nextID++
 	id := m.nextID
 	m.running++
-	sub := &Subagent{id: id, desc: desc, state: "running", started: time.Now(), doneCh: make(chan struct{})}
+	sub := &Subagent{id: id, desc: desc, brief: brief, state: "running", started: time.Now(), doneCh: make(chan struct{})}
 	m.subs[id] = sub
 	m.order = append(m.order, id)
 	var sink Sink
