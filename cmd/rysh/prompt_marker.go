@@ -127,15 +127,24 @@ foreach ($__p in $__rysh_profiles) {
 # PowerShell's prompt must RETURN a string. Writing the marker with
 # Write-Host inside prompt makes the console host re-render the prompt in a
 # tight loop (the "(rysh)(rysh)..." spam), so the marker is returned, not
-# written. The previous prompt is captured ONCE here, at top level before
-# the function is redefined: invoking the captured FunctionInfo from inside
-# the new prompt deadlocks PowerShell, so the base string is frozen once and
-# simply concatenated with the dim marker on every render — no recursion,
-# no loop.
+# written. The original prompt function is captured by its ScriptBlock and
+# called dynamically on every render, so the prompt reflects the current
+# working directory (cd .. updates the path). Calling the ScriptBlock from
+# inside the new function is safe (no deadlock); invoking the captured
+# FunctionInfo directly would re-resolve to the new prompt and loop.
+# The prompt also emits an OSC 7 cwd report (ESC ] 7 ; file://<host>/<path>
+# BEL) so rysh's cwdTracker can follow cd on every platform; PowerShell does
+# not emit OSC 7 natively, and without it the AI prompt's \w and the agent's
+# tool cwd fall back to rysh's own working directory (never changes on
+# Windows/macOS).
 $__rysh_prev = Get-Item Function:prompt -ErrorAction SilentlyContinue
-$__rysh_base = if ($__rysh_prev) { & $__rysh_prev } else { "PS> " }
+$__rysh_block = if ($__rysh_prev) { $__rysh_prev.ScriptBlock } else { $null }
 function prompt {
-	"$([char]27)[2m(rysh)$([char]27)[0m " + $__rysh_base
+	$esc = [char]27
+	$loc = $executionContext.SessionState.Path.CurrentLocation.Path
+	[Console]::Write("$esc]7;file://$env:COMPUTERNAME/$($loc -replace '\\','/')$([char]7)")
+	$base = if ($__rysh_block) { & $__rysh_block } else { "PS $loc$('>' * ($nestedPromptLevel + 1)) " }
+	"$esc[2m(rysh)$esc[0m " + $base
 }
 `
 	if err := os.WriteFile(script, []byte(content), 0o600); err != nil {

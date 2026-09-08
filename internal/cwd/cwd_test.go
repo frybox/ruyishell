@@ -75,13 +75,16 @@ func TestTrackerIgnoresOtherOSC(t *testing.T) {
 
 func TestParseURI(t *testing.T) {
 	cases := []struct{ uri, want string }{
-		{"file:///tmp/x", "/tmp/x"},     // empty authority
-		{"file://host/tmp/x", "/tmp/x"}, // with authority
-		{"file://host/", "/"},           // root
-		{"", ""},                        // empty
-		{"not-a-file-uri", ""},          // wrong scheme
-		{"file://host", ""},             // no path
-		{"file://host/a%20b", "/a b"},   // encoded space
+		{"file:///tmp/x", "/tmp/x"},                      // empty authority
+		{"file://host/tmp/x", "/tmp/x"},                  // with authority
+		{"file://host/", "/"},                            // root
+		{"", ""},                                         // empty
+		{"not-a-file-uri", ""},                           // wrong scheme
+		{"file://host", ""},                              // no path
+		{"file://host/a%20b", "/a b"},                    // encoded space
+		{"file://host/D:/foo", "D:\\foo"},                // Windows drive-letter path
+		{"file://host/d:/projects/rysh", "D:\\projects\\rysh"}, // lower-case drive
+		{"file://host/C:/Users/My%20Docs", "C:\\Users\\My Docs"}, // Windows + encoded space
 	}
 	for _, c := range cases {
 		if got := parseURI(c.uri); got != c.want {

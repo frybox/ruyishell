@@ -92,7 +92,11 @@ func findTerminator(p []byte) (int, int) {
 	return -1, 0
 }
 
-// parseURI extracts and URL-decodes the path from a file:// URI.
+// parseURI extracts and URL-decodes the path from a file:// URI. On Windows
+// the URI arrives as file://host/D:/foo/bar (a drive-letter path with a
+// leading slash); the leading slash is stripped and forward slashes are
+// converted to backslashes so the result is a native Windows path. On
+// POSIX the path is returned as-is (absolute, leading slash kept).
 func parseURI(uri string) string {
 	if !strings.HasPrefix(uri, "file://") {
 		return ""
@@ -107,6 +111,24 @@ func parseURI(uri string) string {
 	decoded, err := url.PathUnescape(path)
 	if err != nil {
 		return ""
+	}
+	return normalizePath(decoded)
+}
+
+// normalizePath converts a decoded file:// path to the platform's native
+// form. A Windows drive-letter path arrives with a leading slash
+// (file://host/D:/foo -> "/D:/foo"); strip it and flip slashes. POSIX
+// paths are already native and returned unchanged.
+func normalizePath(decoded string) string {
+	// Windows drive-letter path: "/D:..." or "/d:..." -> "D:\...".
+	if len(decoded) >= 3 && decoded[0] == '/' && decoded[2] == ':' {
+		// Drop the leading slash, keep the drive letter + colon + rest.
+		p := decoded[1:]
+		// Normalize drive letter to uppercase for consistency.
+		if p[0] >= 'a' && p[0] <= 'z' {
+			p = string(p[0]-32) + p[1:]
+		}
+		return strings.ReplaceAll(p, "/", "\\")
 	}
 	return decoded
 }

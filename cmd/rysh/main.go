@@ -1569,8 +1569,14 @@ func run(targetID string, startInAI bool) int {
 					rec.Output(chunk)
 				}
 				// Track the shell's cwd from OSC 7 reports the shell emits
-				// (cross-platform; /proc is the Linux fallback).
+				// (cross-platform; /proc is the Linux fallback). When the cwd
+				// changes, mirror it into rysh's own process cwd so spawned
+				// helpers (the bash tool, etc.) inherit the shell's directory.
+				prevCWD := cwdTracker.CWD()
 				cwdTracker.Feed(chunk)
+				if newCWD := cwdTracker.CWD(); newCWD != "" && newCWD != prevCWD {
+					os.Chdir(newCWD)
+				}
 				if st.Mode() == mode.AI {
 					// Defer to the pending buffer (keep-head) and log the
 					// complete lines; nothing touches the screen in AI mode.
