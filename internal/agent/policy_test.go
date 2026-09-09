@@ -137,9 +137,9 @@ func TestGateAlwaysPerToolRule(t *testing.T) {
 	}
 }
 
-func TestGateAutoModeNeverAsks(t *testing.T) {
+func TestGateAlwaysModeNeverAsks(t *testing.T) {
 	ask, seen := scriptedAsk(nil)
-	a := NewApproval("auto", ask)
+	a := NewApproval("always", ask)
 	ctx := context.Background()
 
 	for _, tc := range []struct {
@@ -149,11 +149,41 @@ func TestGateAutoModeNeverAsks(t *testing.T) {
 		{"write", map[string]any{"path": "a"}},
 		{"edit", map[string]any{"path": "b"}}} {
 		if got := a.Gate(ctx, tc.tool, tc.args); got != "" {
-			t.Errorf("Gate(%s) in auto denied: %q", tc.tool, got)
+			t.Errorf("Gate(%s) in always denied: %q", tc.tool, got)
 		}
 	}
 	if len(*seen) != 0 {
-		t.Fatalf("ask called %d times in auto mode, want 0", len(*seen))
+		t.Fatalf("ask called %d times in always mode, want 0", len(*seen))
+	}
+}
+
+func TestGateNeverModeRefusesWithoutAsking(t *testing.T) {
+	ask, seen := scriptedAsk(nil)
+	a := NewApproval("never", ask)
+	ctx := context.Background()
+
+	// Read-only work still runs free.
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+	}{{"read", map[string]any{}}, {"bash", map[string]any{"command": "ls -la"}}} {
+		if got := a.Gate(ctx, tc.tool, tc.args); got != "" {
+			t.Errorf("Gate(%s) in never refused read-only: %q", tc.tool, got)
+		}
+	}
+	// Every gated call is refused without asking.
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+	}{{"bash", map[string]any{"command": "rm -rf /"}},
+		{"write", map[string]any{"path": "a"}},
+		{"edit", map[string]any{"path": "b"}}} {
+		if got := a.Gate(ctx, tc.tool, tc.args); !strings.Contains(got, "[用户拒绝了该操作]") {
+			t.Errorf("Gate(%s) in never = %q, want refusal text", tc.tool, got)
+		}
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("ask called %d times in never mode, want 0", len(*seen))
 	}
 }
 
@@ -188,10 +218,10 @@ func TestWorkerGateSharesCore(t *testing.T) {
 	if len(*seen) != 1 {
 		t.Fatalf("ask called %d times, want 1 (only the parent's make test)", len(*seen))
 	}
-	// Mode hot-reload reaches the worker: auto lets everything through.
-	a.SetMode("auto")
+	// Mode hot-reload reaches the worker: always lets everything through.
+	a.SetMode("always")
 	if g := w.Gate(ctx, "write", map[string]any{"path": "x"}); g != "" {
-		t.Fatalf("worker Gate(write) in auto = %q, want \"\"", g)
+		t.Fatalf("worker Gate(write) in always = %q, want \"\"", g)
 	}
 	// The safe classifier never needed a rule — still free for the worker.
 	if g := w.Gate(ctx, "bash", map[string]any{"command": "git status"}); g != "" {
@@ -234,9 +264,19 @@ func TestSetModeHotSwitch(t *testing.T) {
 	if got := a.Gate(ctx, "write", map[string]any{"path": "a"}); got != "" {
 		t.Fatalf("Gate(write) denied: %q", got)
 	}
-	a.SetMode("auto")
+	a.SetMode("always")
 	if got := a.Gate(ctx, "write", map[string]any{"path": "b"}); got != "" {
-		t.Fatalf("Gate(write) in auto denied: %q", got)
+		t.Fatalf("Gate(write) in always denied: %q", got)
+	}
+	a.SetMode("never") // never refuses without asking
+	if got := a.Gate(ctx, "write", map[string]any{"path": "c2"}); !strings.Contains(got, "[用户拒绝了该操作]") {
+		t.Fatalf("Gate(write) in never = %q, want refusal text", got)
+	}
+	if got := a.Gate(ctx, "bash", map[string]any{"command": "ls -la"}); got != "" {
+		t.Fatalf("Gate(ls -la) in never = %q, want read-only to pass", got)
+	}
+	if a.Mode() != "never" {
+		t.Fatalf("Mode() = %q, want never", a.Mode())
 	}
 	a.SetMode("ask") // back to ask: rules persist across the switch
 	if got := a.Gate(ctx, "edit", map[string]any{"path": "c"}); got != "" {

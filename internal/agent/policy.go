@@ -1,11 +1,13 @@
 package agent
 
-// Approval policy (design §7): the ask/auto permission gate in front of
-// tool execution. Read-only work runs free — registry reads (read/glob/
-// grep/ls/job_output) always, and bash when it matches the §7.1
-// safe-command classifier. Everything else (write/edit every time, bash
-// outside the classifier) prompts y/n/a in "ask" mode; "auto" runs
-// everything (the pre-M7.4 behavior). An answer of "a" records a
+// Approval policy (design §7): the permission gate in front of tool
+// execution, in one of three modes. Read-only work runs free in every
+// mode — registry reads (read/glob/grep/ls/job_output) always, and bash
+// when it matches the §7.1 safe-command classifier. In "ask" (default)
+// everything else (write/edit every time, bash outside the classifier)
+// prompts y/n/a; "always" runs everything without asking (the pre-M7.4
+// behavior); "never" refuses every gated call without asking, the refusal
+// text fed back so the model finds another route. An answer of "a" records a
 // session-persistent rule: bash rules are command prefixes (§7.2), file
 // tools are remembered per tool name. Denial never kills the task — the
 // refusal is fed back and the model picks another route (§7 审批被拒).
@@ -55,7 +57,7 @@ type AskRequest struct {
 // applies to workers that are already running.
 type approvalCore struct {
 	mu           sync.Mutex
-	mode         string          // "ask" (default) or "auto"
+	mode         string          // "ask" (default), "always" or "never"
 	bashPrefixes map[string]bool // session rules: "git push" → allow
 	alwaysTools  map[string]bool // session rules: per-tool "always"
 	safeExtra    []string        // extra read-only head words treated as safe
@@ -94,16 +96,27 @@ func (a *Approval) WorkerGate() *Approval {
 	return &Approval{core: a.core}
 }
 
-// SetMode switches ask/auto; only the exact value "auto" enables auto.
-// The driver re-reads the mode from the config at each task start, so a
-// config edit applies to the next run without a restart.
+// SetMode switches the gate among "ask", "always" and "never"; unknown
+// values fall back to "ask". The driver re-reads the mode from the config
+// (or a session-level override) at each task start, so an edit applies to
+// the next run without a restart.
 func (a *Approval) SetMode(mode string) {
-	if mode != "auto" {
+	switch mode {
+	case "always", "never":
+	default:
 		mode = "ask"
 	}
 	a.core.mu.Lock()
 	defer a.core.mu.Unlock()
 	a.core.mode = mode
+}
+
+// Mode reports the gate's current mode ("ask", "always" or "never") for
+// display (/approve query).
+func (a *Approval) Mode() string {
+	a.core.mu.Lock()
+	defer a.core.mu.Unlock()
+	return a.core.mode
 }
 
 // SetSafeExtra extends the safe-command classifier with additional
@@ -211,7 +224,9 @@ func approvalDisplay(tool string, args map[string]any) string {
 // returns "" to allow, or the deny text to feed back in place of a
 // result. Only write/edit (always) and bash outside the safe classifier
 // are gated; every other tool — the read family, todo, job_kill — passes
-// unconditionally.
+// unconditionally. In "always" the gate is open; in "never" every gated
+// call is refused without asking; in "ask" the safe classifier and
+// session rules pass free, the rest prompt.
 func (a *Approval) Gate(ctx context.Context, tool string, args map[string]any) string {
 	command, display := "", ""
 	switch tool {
@@ -235,11 +250,18 @@ func (a *Approval) Gate(ctx context.Context, tool string, args map[string]any) s
 	}
 	a.core.mu.Unlock()
 
-	if mode == "auto" {
+	if mode == "always" {
 		return ""
 	}
 	if tool == "bash" && bashLooksSafeWith(extra, command) {
 		return ""
+	}
+	if mode == "never" {
+		// Never is "auto-deny": everything that would have asked is
+		// refused without asking; the refusal is fed back like a user
+		// denial and the model routes around it (§7 审批被拒). The safe
+		// classifier still passes — never mode is still read-free.
+		return denyText(display)
 	}
 	if always {
 		return ""

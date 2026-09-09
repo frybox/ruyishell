@@ -134,13 +134,10 @@ default = "ollama/llama3.1:8b"
 base_url = "http://localhost:11434/v1"
 api = "openai-completions"
 api_key = "ollama"
-
-[[providers.ollama.models]]
-id = "llama3.1:8b"
-name = "Llama 3.1 8B"
-
-[[providers.ollama.models]]
-id = "qwen2.5-coder:7b"
+models = [
+    { id = "llama3.1:8b", name = "Llama 3.1 8B" },
+    { id = "qwen2.5-coder:7b" }
+]
 
 [providers.mycloud]
 base_url = "https://api.example.com/v1"
@@ -244,12 +241,14 @@ This value takes effect **on every question** (config re-read per request, same 
 
 ### Permission approval
 
-`[agent] approval` controls the permission gate for AI task tool execution: `"ask"` (default) asks per write operation and per command not listed in the safety classifier; `"auto"` is fully automatic, zero interruption (equivalent to ungated behavior):
+`[agent] approval` controls the permission gate for AI task tool execution, with three values: `"ask"` (default) asks per write operation and per command not listed in the safety classifier; `"always"` is fully automatic, zero interruption (equivalent to ungated behavior); `"never"` refuses every gated operation without asking (the refusal text is fed back to the model, which routes around it; read-only work still runs free):
 
 ```toml
 [agent]
-approval = "ask"   # "auto" = execute without asking
+approval = "ask"   # or "always" / "never"
 ```
+
+The same values can be applied per session without touching the file: start rysh with `--always-approve` or `--never-approve` (the flag wins over `[agent] approval` for that instance's whole life), or in AI mode use `/approve` — bare `/approve` queries the current mode, and `/approve ask|always|never` sets it (session-level, effective from the next task).
 
 This value takes effect **at the start of every task** (config changes apply to the next task, no restart needed). In ask mode, read-only tools and classifier-passing bash go straight through; everything else pops `? 运行 <命令>（y 是 / n 否 / a 总是）` — `y` allows this one, `n` denies (denial text fed back to the model, the task continues), `a` allows and records a session-level rule (bash by command prefix / file tools by tool name; rules live in memory only, cleared on restart). After answering y/a the command actually runs, and below the bar `⠋ 执行中...` is shown (until the `[tool]` result line lands) — a slow execution keeps it spinning; it is not an unresponsive key.
 
@@ -263,7 +262,7 @@ This value takes effect **at the start of every task** (config changes apply to 
 | `←` / `→` / `Home` / `End` / `Backspace` | Move editing cursor / delete in AI mode |
 | `↑` / `↓` (`Ctrl+P` / `Ctrl+N`) | Rotate submitted user inputs in AI mode: from the most recent, select the previous/next in turn and backfill the draft (editable before re-submitting); continuing to edit leaves the rotation; passing the most recent returns to the current draft |
 | `Ctrl+Z` | Undo the most recent draft edit in AI mode (insert / delete / clear), repeatable |
-| `Enter` (draft starts with `/`) | Submit as a slash command (`/model` `/new` `/ls` `/history` `/resume` `/help` `/quit`, see "Multi-session"); draft cleared, stay in AI mode |
+| `Enter` (draft starts with `/`) | Submit as a slash command (`/model` `/approve` `/new` `/ls` `/history` `/resume` `/help` `/quit`, see "Multi-session"); draft cleared, stay in AI mode |
 | `Enter` (natural-language draft) | Submit as a prompt to the current model; the reply renders streaming on the shared stream; stay in AI mode on completion to follow up |
 | `Enter` (draft starts with `!`) | Not sent to the model — this is a shell command mistyped into AI mode: the draft is kept and two exits are offered (press the mode-switch key to go to the shell with the input preserved, executing after stripping the leading `!`; or clear the draft, then switch to the shell with a leading space and retype) |
 | `Enter` (empty draft) | no-op |

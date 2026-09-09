@@ -5,7 +5,7 @@ package main
 // streamed reply text) and locks the streaming keys down to y/n/a —
 // y executes the command, n feeds the refusal back and ends the task
 // without running it, a records the session prefix rule so the second
-// same-prefix command runs without a prompt, and auto mode never prompts.
+// same-prefix command runs without a prompt, and always mode never prompts.
 // All through the real engine/provider/tool stack over a mock
 // OpenAI-compatible endpoint.
 
@@ -251,11 +251,11 @@ bash_timeout = 30
 	}
 }
 
-// auto mode: the same gated command runs with zero prompts (§7.2).
-func TestAgentApprovalAutoModeZeroPrompts(t *testing.T) {
+// always mode: the same gated command runs with zero prompts (§7.2).
+func TestAgentApprovalAlwaysModeZeroPrompts(t *testing.T) {
 	requireLinuxProc(t)
 	home := approvalHome(t)
-	f := filepath.Join(home, "appr-auto.txt")
+	f := filepath.Join(home, "appr-always.txt")
 	_ = os.Remove(f)
 
 	var mu sync.Mutex
@@ -277,7 +277,7 @@ func TestAgentApprovalAutoModeZeroPrompts(t *testing.T) {
 		case 0:
 			chunks = []string{bashCallChunk("call_0", "touch "+f)}
 		case 1:
-			ans = "APPROVAL_AUTO_DONE"
+			ans = "APPROVAL_ALWAYS_DONE"
 		default:
 			http.Error(w, "unexpected turn", http.StatusBadRequest)
 			return
@@ -297,7 +297,7 @@ api = "openai-completions"
 id = "llama3.1:8b"
 
 [agent]
-approval = "auto"
+approval = "always"
 bash_timeout = 30
 `, srv.URL)
 
@@ -306,15 +306,15 @@ bash_timeout = 30
 	enterAI(t, p, r)
 
 	p.Write([]byte("create the file\r"))
-	out := r.readUntil(t, "APPROVAL_AUTO_DONE", waitTimeout)
+	out := r.readUntil(t, "APPROVAL_ALWAYS_DONE", waitTimeout)
 	if strings.Contains(out, "? 运行") {
-		t.Fatalf("auto mode prompted for approval: %q", out)
+		t.Fatalf("always mode prompted for approval: %q", out)
 	}
-	// No bar in auto mode, but the tool execution is still visible: the
+	// No bar in always mode, but the tool execution is still visible: the
 	// 执行中 spinner runs straight from the tool call.
 	assertContains(t, out, "执行中")
 	if _, err := os.Stat(f); err != nil {
-		t.Fatalf("auto-mode command did not execute: %v", err)
+		t.Fatalf("always-mode command did not execute: %v", err)
 	}
 }
 
@@ -384,5 +384,81 @@ bash_timeout = 30
 	assertContains(t, out, "[tool] $ touch")
 	if _, err := os.Stat(f); err != nil {
 		t.Fatalf("approved command did not execute: %v", err)
+	}
+}
+
+// The /approve slash command queries and sets the session's permission
+// mode without touching the config file (§7.2): bare /approve reports the
+// current mode; /approve always switches to zero-prompt execution and the
+// next task's gated command runs with no bar.
+func TestAgentApproveSlashQueryAndSet(t *testing.T) {
+	requireLinuxProc(t)
+	home := approvalHome(t)
+	f := filepath.Join(home, "appr-slash.txt")
+	_ = os.Remove(f)
+
+	var mu sync.Mutex
+	turn := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.ReadAll(r.Body)
+		mu.Lock()
+		n := turn
+		turn++
+		mu.Unlock()
+		var chunks []string
+		ans := "…"
+		switch n {
+		case 0:
+			chunks = []string{bashCallChunk("call_slash", "touch "+f)}
+		case 1:
+			ans = "APPROVE_SLASH_DONE"
+		default:
+			http.Error(w, "unexpected turn", http.StatusBadRequest)
+			return
+		}
+		writeSSE(w, chunks, ans)
+	}))
+	defer srv.Close()
+
+	cfg := fmt.Sprintf(`
+default = "ollama/llama3.1:8b"
+
+[providers.ollama]
+base_url = %q
+api = "openai-completions"
+
+[[providers.ollama.models]]
+id = "llama3.1:8b"
+
+[agent]
+bash_timeout = 30
+`, srv.URL)
+
+	p, _, r := startRyshWithConfig(t, cfg)
+	r.readUntil(t, "$ ", startupTimeout)
+	enterAI(t, p, r)
+
+	// Query: default config is ask mode.
+	p.Write([]byte("/approve\r"))
+	win := r.readUntil(t, "审批模式: ask", waitTimeout)
+	assertContains(t, win, "审批模式: ask")
+
+	// Set to always: the confirmation names the mode.
+	p.Write([]byte("/approve always\r"))
+	win = r.readUntil(t, "已设为 always", waitTimeout)
+	assertContains(t, win, "已设为 always")
+
+	// Now a gated command runs with zero prompts (always mode).
+	p.Write([]byte("create the file\r"))
+	out := r.readUntil(t, "APPROVE_SLASH_DONE", waitTimeout)
+	if strings.Contains(out, "? 运行") {
+		t.Fatalf("always mode (via /approve) prompted for approval: %q", out)
+	}
+	if _, err := os.Stat(f); err != nil {
+		t.Fatalf("command after /approve always did not execute: %v", err)
 	}
 }
