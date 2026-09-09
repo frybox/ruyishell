@@ -1623,7 +1623,7 @@ id = "llama3.1:8b"
 context_window = 4096
 
 [agent]
-approval = "auto"
+approval = "always"
 `, srv.URL)
 
 	home := t.TempDir()
@@ -2449,7 +2449,7 @@ id = "llama3.1:8b"
 # This scenario predates the §7 approval gate and pins the ungated path —
 # its piped commands would otherwise prompt with nobody to answer.
 [agent]
-approval = "auto"
+approval = "always"
 `, srv.URL)
 
 	p, _, r := startRyshWithConfig(t, cfg)

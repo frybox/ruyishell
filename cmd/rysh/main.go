@@ -98,6 +98,14 @@ type switchReq struct {
 	notice string
 }
 
+// approvalOverride is this session's permission mode, set by the
+// --always-approve / --never-approve startup flags or an in-session
+// /approve command. When non-empty it overrides [agent] approval for
+// this instance's whole life; the next task's SetMode reads it before
+// falling back to the config, and the gate re-reads it live at each
+// task start.
+var approvalOverride string
+
 // pendingSwitchT is a session switch deferred because a task was streaming;
 // the mainloop executes it (via switchToMeta) once finalize settles the
 // stream. landInAI records whether the request originated from AI mode, so
@@ -704,6 +712,25 @@ func run(targetID string, startInAI bool) int {
 				os.Stdout.WriteString(screen.SetTitle(ryshTitle(modelRef, active.meta.ID)))
 			}
 			return []string{"model: " + modelRef}, nil
+		case "/approve":
+			// Permission gate for this session: no argument queries the
+			// current mode; ask|always|never sets it (session-level, it
+			// overrides the config and takes effect on the next task).
+			mode := ""
+			if len(fields) > 1 {
+				mode = fields[1]
+			}
+			switch mode {
+			case "":
+				return []string{uiT.Get("approve_current", approval.Mode())}, nil
+			case "ask", "always", "never":
+				approvalOverride = mode
+				approval.SetMode(mode)
+				logWrite("sys", "approve:"+mode)
+				return []string{uiT.Get("approve_set", mode)}, nil
+			default:
+				return []string{uiT.Get("approve_usage")}, nil
+			}
 		case "/new":
 			// Create a fresh session and switch to it. The switch (shell
 			// restart + repaint) runs after writeMu is released.
@@ -762,6 +789,7 @@ func run(targetID string, startInAI bool) int {
 				uiT.Get("help_history"),
 				uiT.Get("help_resume"),
 				uiT.Get("help_model"),
+				uiT.Get("help_approve"),
 				uiT.Get("help_quit"),
 				uiT.Get("help_help"),
 				uiT.Get("help_tab"),
@@ -1409,9 +1437,15 @@ func run(targetID string, startInAI bool) int {
 		// §3.9): a stuck model is caught by repetition, read churn and L1
 		// slimming. Events reach the screen and the session log through
 		// the sink.
-		// The approval mode is re-read per task from the snapshotted
-		// config, so a config edit applies to the next run (§7.2).
-		approval.SetMode(cfgNow.Agent.ApprovalMode())
+		// The approval mode is re-read per task: a session-level override
+		// (--always-approve / --never-approve flag or an /approve command)
+		// wins, else the snapshotted config, so a config edit applies to
+		// the next run (§7.2).
+		if approvalOverride != "" {
+			approval.SetMode(approvalOverride)
+		} else {
+			approval.SetMode(cfgNow.Agent.ApprovalMode())
+		}
 		runCfg := agent.Config{
 			Cwd:            cwd,
 			BashTimeout:    cfgNow.Agent.BashTimeoutDur(),
@@ -2210,11 +2244,25 @@ func main() {
 // instance via its control channel, and everything else prints and exits.
 func ryshMain() int {
 	args := os.Args[1:]
-	cmd := ""
-	if len(args) > 0 {
-		cmd = args[0]
-	}
 	inside := os.Getenv(insideEnv) != ""
+	// Session-level permission mode override: --always-approve /
+	// --never-approve set it regardless of position (they are flags, not
+	// commands) and win over [agent] approval for this instance's whole
+	// life. The subcommand is the first argument that is not one of these
+	// flags, so `rysh --always-approve` behaves exactly like `rysh`.
+	cmd := ""
+	for _, a := range args {
+		switch a {
+		case "--always-approve":
+			approvalOverride = "always"
+		case "--never-approve":
+			approvalOverride = "never"
+		default:
+			if cmd == "" {
+				cmd = a
+			}
+		}
+	}
 	// One-shot subcommands do not read ~/.rysh/config.toml, so the UI
 	// language resolves from the environment alone.
 	uiT = i18n.New(i18n.Resolve("", os.Getenv("LANG")))

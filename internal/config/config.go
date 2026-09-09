@@ -79,10 +79,11 @@ type AgentConfig struct {
 	// still running after this long becomes a background job. nil → 60;
 	// 0 disables auto-backgrounding.
 	AutoBackground *int `toml:"auto_background_after"`
-	// Approval is the §7.2 permission mode: "auto" runs every tool call
-	// without asking; anything else (including unset) is "ask" — read-only
-	// work runs free, writes and non-safe bash prompt y/n/a first. Re-read
-	// per task like the rest of [agent], so edits apply to the next run.
+	// Approval is the §7.2 permission mode: "ask" (default) reads free and
+	// asks per write / non-safe bash; "always" runs every tool call without
+	// asking; "never" refuses every gated call without asking (read-only
+	// work still runs free). Re-read per task like the rest of [agent], so
+	// edits apply to the next run.
 	Approval *string `toml:"approval"`
 }
 
@@ -119,14 +120,19 @@ func (a *AgentConfig) AutoBackgroundDur() time.Duration {
 	return time.Duration(*a.AutoBackground) * time.Second
 }
 
-// ApprovalMode resolves the §7.2 permission mode: only the exact value
-// "auto" enables it; unset or any other value falls back to "ask" (rysh
+// ApprovalMode resolves the §7.2 permission mode: "ask" (default) reads
+// free and asks per write / non-safe bash; "always" runs everything
+// without asking; "never" refuses every gated call without asking (rysh
 // runs in the user's real projects, so writes default to asking first).
 func (a *AgentConfig) ApprovalMode() string {
-	if a.Approval != nil && *a.Approval == "auto" {
-		return "auto"
+	switch {
+	case a.Approval != nil && *a.Approval == "always":
+		return "always"
+	case a.Approval != nil && *a.Approval == "never":
+		return "never"
+	default:
+		return "ask"
 	}
-	return "ask"
 }
 
 // TUI holds terminal-UI preferences.

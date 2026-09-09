@@ -11,7 +11,10 @@ import (
 // shell is the environment: PROMPT_COMMAND is the single env var bash
 // imports and runs before every prompt. We export it (see shellEnv in
 // main.go); the child's own rc may then overwrite it, in which case the
-// marker simply stays out and the user's prompt is never touched.
+// marker simply stays out and the user's prompt is never touched. Besides
+// the tag, the one-liner emits an OSC 7 cwd report (file://$PWD) before
+// every prompt so rysh's cwd tracker follows the shell's cd on every
+// platform (the pwsh shim emits the same report).
 //
 // The zsh half. zsh has neither an rc-file flag nor a PROMPT_COMMAND, so
 // the only environment-driven hook is ZDOTDIR: we point it at a private
@@ -42,7 +45,14 @@ const promptTag = "\x1b[2m" + promptTagText + "\x1b[0m"
 // space) is one single-quoted stretch: an unquoted space inside a case
 // pattern would end the pattern word and break the syntax. The quoted
 // pattern matches the prefix's exact bytes, so a re-run never doubles it.
-const promptMarkerCmd = "case $PS1 in '\\[" + promptTag + "\\] '*) ;; *) PS1='\\[" + promptTag + "\\] '$PS1;; esac"
+//
+// The second, independent clause appends the OSC 7 cwd report
+// (printf '\033]7;file://$PWD\007') to PROMPT_COMMAND, guarded by a
+// case on the literal ]7; so a re-run never doubles it and a user rc that
+// already reports cwd (starship etc.) is left alone. $PWD is expanded by
+// bash at each prompt, so the report always carries the current directory.
+const promptMarkerCmd = "case $PS1 in '\\[" + promptTag + "\\] '*) ;; *) PS1='\\[" + promptTag + "\\] '$PS1;; esac" +
+	"; case $PROMPT_COMMAND in *']7;'*) ;; *) PROMPT_COMMAND=\"printf '\\\\033]7;file://$PWD\\\\007'; \"$PROMPT_COMMAND;; esac"
 
 // zshMarkerEnvFile is the sole content of the wrapper ZDOTDIR. The ${var}
 // braces keep the [ that follows a variable from parsing as an array
@@ -53,7 +63,9 @@ const zshMarkerEnvFile = `# rysh prompt marker (see prompt_marker.go). This wrap
 # only this file: it points ZDOTDIR back at the user's real dotdir so the
 # .zprofile/.zshrc/.zlogin and completion dump resolve as before, runs the
 # user's real .zshenv (the redirection would otherwise hide it), and
-# registers the hook that prepends the dim "(rysh)" tag to the prompt.
+# registers the hook that prepends the dim "(rysh)" tag to the prompt and
+# emits an OSC 7 cwd report (file://$PWD) before every prompt so rysh's
+# cwd tracker follows cd (the pwsh shim emits the same report).
 if [[ -n ${RYSH_ZSH_SRC_DIR:-} ]]; then
   ZDOTDIR=$RYSH_ZSH_SRC_DIR
   if [[ -f $ZDOTDIR/.zshenv ]]; then
@@ -63,6 +75,7 @@ if [[ -n ${RYSH_ZSH_SRC_DIR:-} ]]; then
   __rysh_prompt_tag() {
     local pre="%{${__rysh_zsh_esc}[2m` + promptTagText + `${__rysh_zsh_esc}[0m%} "
     case $PROMPT in "$pre"*) ;; *) PROMPT="$pre$PROMPT" ;; esac
+    print -n "${__rysh_zsh_esc}]7;file://${PWD}${__rysh_zsh_esc}\\\\"
   }
   precmd_functions+=(__rysh_prompt_tag)
 fi

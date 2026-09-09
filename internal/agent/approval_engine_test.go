@@ -179,7 +179,7 @@ func TestRunApprovalAlwaysPrefixSkipsSecondAsk(t *testing.T) {
 func TestRunApprovalAutoModeNeverAsks(t *testing.T) {
 	dir := t.TempDir()
 	n := 0
-	ap := NewApproval("auto", func(ctx context.Context, req AskRequest) Answer {
+	ap := NewApproval("always", func(ctx context.Context, req AskRequest) Answer {
 		n++
 		return AnswerDeny
 	})

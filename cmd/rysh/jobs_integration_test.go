@@ -116,7 +116,7 @@ api = "openai-completions"
 id = "llama3.1:8b"
 
 [agent]
-approval = "auto"
+approval = "always"
 bash_timeout = 30
 auto_background_after = 1
 `, srv.URL)
@@ -193,7 +193,7 @@ api = "openai-completions"
 id = "llama3.1:8b"
 
 [agent]
-approval = "auto"
+approval = "always"
 bash_timeout = 60
 auto_background_after = 30
 `, srv.URL)

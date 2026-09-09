@@ -326,12 +326,15 @@ func TestAgentApprovalMode(t *testing.T) {
 		t.Fatalf("default approval = %q, want ask", got)
 	}
 
-	// Exact "auto" → auto; any other value falls back to ask.
+	// "always" and "never" pass through; unset, empty and unknown values
+	// fall back to ask.
 	for _, tc := range []struct {
 		raw, want string
 	}{
-		{`approval = "auto"`, "auto"},
 		{`approval = "ask"`, "ask"},
+		{`approval = "always"`, "always"},
+		{`approval = "never"`, "never"},
+		{`approval = "auto"`, "ask"},
 		{`approval = "yolo"`, "ask"},
 		{`approval = ""`, "ask"},
 	} {
