@@ -1603,9 +1603,17 @@ func run(targetID string, startInAI bool) int {
 					rec.Output(chunk)
 				}
 				// Track the shell's cwd from OSC 7 reports the shell emits
-				// (cross-platform; /proc is the Linux fallback). When the cwd
-				// changes, mirror it into rysh's own process cwd so spawned
-				// helpers (the bash tool, etc.) inherit the shell's directory.
+				// (cross-platform — bash/zsh/pwsh hooks all emit the report,
+				// so this holds on macOS and Windows, not just Linux). When
+				// the cwd changes, mirror it into rysh's own process cwd so
+				// spawned helpers (the bash tool, the session-switch shell
+				// restart, etc.) inherit the shell's directory. Read only the
+				// tracker here, never `c`: this loop is the long-lived output
+				// pump that survives a session switch, while the mainloop
+				// swaps `c = c2` on the same pty — reading `c` here would
+				// race the swap. (The /proc fallback for the AI-context cwd
+				// header lives in currentCWD on the mainloop and is
+				// separate.)
 				prevCWD := cwdTracker.CWD()
 				cwdTracker.Feed(chunk)
 				if newCWD := cwdTracker.CWD(); newCWD != "" && newCWD != prevCWD {
@@ -1781,6 +1789,7 @@ func run(targetID string, startInAI bool) int {
 		// signal-forwarding goroutines to it. The new generation gets its own
 		// channel and its own error slot, and both reapers are handed the
 		// values rather than the variables they could outlive.
+		cwdTracker.Reset() // the old shell's last OSC 7 report is stale
 		c2 := p.Command(sh, args...)
 		c2.Env = shellEnv(meta.ID)
 		startErr := c2.Start()

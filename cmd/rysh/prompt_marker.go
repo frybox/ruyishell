@@ -46,13 +46,18 @@ const promptTag = "\x1b[2m" + promptTagText + "\x1b[0m"
 // pattern would end the pattern word and break the syntax. The quoted
 // pattern matches the prefix's exact bytes, so a re-run never doubles it.
 //
-// The second, independent clause appends the OSC 7 cwd report
-// (printf '\033]7;file://$PWD\007') to PROMPT_COMMAND, guarded by a
-// case on the literal ]7; so a re-run never doubles it and a user rc that
-// already reports cwd (starship etc.) is left alone. $PWD is expanded by
-// bash at each prompt, so the report always carries the current directory.
+// The one-liner also emits the OSC 7 cwd report (ESC ] 7 ; file://<cwd>
+// BEL) on every prompt so rysh's cwd tracker follows the shell's cd on
+// every platform (the pwsh shim emits the same report). The path is the
+// %s argument with $PWD expanded by bash at each prompt, so the report
+// always carries the current directory; emitting it repeatedly is harmless
+// (the tracker keeps the latest). It does not touch PROMPT_COMMAND: the
+// marker runs only while it is still in PROMPT_COMMAND — i.e. until a
+// user rc overwrites it, exactly when the tag yields — and in that case
+// both the tag and the report are simply absent (on Linux /proc still
+// feeds the display and the process-cwd mirror via currentCWD).
 const promptMarkerCmd = "case $PS1 in '\\[" + promptTag + "\\] '*) ;; *) PS1='\\[" + promptTag + "\\] '$PS1;; esac" +
-	"; case $PROMPT_COMMAND in *']7;'*) ;; *) PROMPT_COMMAND=\"printf '\\\\033]7;file://$PWD\\\\007'; \"$PROMPT_COMMAND;; esac"
+	"; printf '\\033]7;file://%s\\007' \"$PWD\""
 
 // zshMarkerEnvFile is the sole content of the wrapper ZDOTDIR. The ${var}
 // braces keep the [ that follows a variable from parsing as an array
