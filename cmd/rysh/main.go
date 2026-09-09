@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/aymanbagabas/go-pty"
@@ -856,12 +857,26 @@ func run(targetID string, startInAI bool) int {
 		}
 	}()
 
+	// shellPid returns the running shell's pid, or 0 if the shell process
+	// never started. A failed c2.Start() in switchToMeta leaves c.Process
+	// == nil, and dereferencing it (c.Process.Pid) is exactly the SIGSEGV
+	// this guards against. Every reader treats 0 as "no live shell":
+	// currentCWD/currentEnv fall back to rysh's own cwd and an empty env,
+	// and shellInForeground reports the shell as not foreground — all the
+	// correct answers for a dead shell, without touching a nil *os.Process.
+	shellPid := func() int {
+		if c.Process != nil {
+			return c.Process.Pid
+		}
+		return 0
+	}
+
 	// drawAIPromptLocked writes the AI input line (PS-style prompt + draft)
 	// at the cursor's current position. The prompt names the active model
 	// (§3.3), so it is re-drawn whenever the model or the session changes.
 	// writeMu must be held by the caller.
 	drawAIPromptLocked := func() {
-		dir := currentCWD(c.Process.Pid)
+		dir := currentCWD(shellPid())
 		prompt, pw := screen.PSExpandModel(cfg.AIPrompt(modelRef), dir, modelRef)
 		ai.BeginInput(prompt, pw)
 		ai.RenderInput(func(s string) { os.Stdout.WriteString(s) }, width)
@@ -1333,8 +1348,8 @@ func run(targetID string, startInAI bool) int {
 		cfgNow := cfg
 		pathNow := cfgPath
 		refNow := modelRef
-		cwd := currentCWD(c.Process.Pid)
-		env := currentEnv(c.Process.Pid, envAllowlistFor(cfgNow))
+		cwd := currentCWD(shellPid())
+		env := currentEnv(shellPid(), envAllowlistFor(cfgNow))
 		events := rec.Events()
 		// hist is the verbatim record of past turns; the engine L1-slims
 		// its own request view per round (newest tool results verbatim,
@@ -1733,8 +1748,26 @@ func run(targetID string, startInAI bool) int {
 		// without canonical mode or echo, and the replacement shell would
 		// inherit that and swallow typed input. Put the pty back the way a
 		// freshly opened one is before the new generation starts.
+
+		// On macOS, killing the session leader (the shell) revokes the
+		// slave end of the pty and invalidates all fds pointing to it
+		// (including the one go-pty holds internally). Reopen the slave
+		// device by its path and dup2 the new fd onto the old fd number
+		// so the next shell can use the same pty.
 		if up, ok := p.(pty.UnixPty); ok {
-			resetPtyTermios(up.Slave().Fd())
+			oldFd := int(up.Slave().Fd())
+			// Try to reopen the slave in case the old fd was revoked.
+			if newFd, err := syscall.Open(up.Slave().Name(), syscall.O_RDWR, 0); err == nil {
+				if newFd != oldFd {
+					_ = syscall.Dup2(newFd, oldFd)
+					_ = syscall.Close(newFd)
+				}
+				// Now oldFd points to the live slave again.
+				resetPtyTermios(uintptr(oldFd))
+			} else {
+				// Fallback: try old fd anyway (may fail on macOS).
+				resetPtyTermios(up.Slave().Fd())
+			}
 		}
 
 		// Restart a fresh shell on the same pty and re-attach the wait and
@@ -1974,7 +2007,7 @@ mainloop:
 			// mode-switch gestures and keystroke recording; the
 			// alternate-screen flag alone would miss foreground programs
 			// that never enter the alternate screen.
-			fg := !fs && shellInForeground(p.Fd(), c.Process.Pid)
+			fg := !fs && shellInForeground(p.Fd(), shellPid())
 			// The fresh-prompt space gesture only applies when the shell itself
 			// owns the keyboard (fg): while a foreground child runs (less, ssh,
 			// an interactive program) a space belongs to that child, so it is
@@ -2064,7 +2097,7 @@ mainloop:
 						rec.PasteText("\n")
 						break
 					}
-					cmd := rec.Enter(currentCWD(c.Process.Pid))
+					cmd := rec.Enter(currentCWD(shellPid()))
 					if cmd != "" {
 						writeMu.Lock()
 						logWrite("shk", aiui.Sanitize(cmd))
