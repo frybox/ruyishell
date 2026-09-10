@@ -480,14 +480,37 @@ func capReport(r string) string {
 	return truncateMid(r, taskReportHead, taskReportTail)
 }
 
-// HumanDuration renders a duration as "45s" or "2m03s".
+// HumanDuration renders a duration as its non-zero units from the largest
+// down, so a run is readable at any scale: "45.2s" under a minute, then
+// e.g. "2m3s", "5h12m" or "2d1h23m4s" — zero units are omitted.
 func HumanDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
 	if d < time.Minute {
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
-	m := int(d.Minutes())
-	sec := int(d.Seconds()) % 60
-	return fmt.Sprintf("%dm%02ds", m, sec)
+	totalSec := int(d.Seconds())
+	days := totalSec / 86400
+	totalSec %= 86400
+	hours := totalSec / 3600
+	totalSec %= 3600
+	mins := totalSec / 60
+	secs := totalSec % 60
+	var b strings.Builder
+	if days > 0 {
+		fmt.Fprintf(&b, "%dd", days)
+	}
+	if hours > 0 {
+		fmt.Fprintf(&b, "%dh", hours)
+	}
+	if mins > 0 {
+		fmt.Fprintf(&b, "%dm", mins)
+	}
+	if secs > 0 {
+		fmt.Fprintf(&b, "%ds", secs)
+	}
+	return b.String()
 }
 
 // progressSink forwards the worker's events to the TUI sink while
