@@ -78,6 +78,12 @@ func New() *Renderer {
 	return &Renderer{}
 }
 
+// Pending reports whether the last received line is still unterminated
+// (no newline yet). That line may have been fully streamed to the screen
+// already, in which case Close returns nothing for it — callers that must
+// guarantee a final newline capture Pending before calling Close.
+func (r *Renderer) Pending() bool { return len(r.cur) > 0 }
+
 // Write consumes a chunk of the markdown stream and returns the styled
 // output that can be emitted immediately. Complete lines are rendered as
 // they arrive; a trailing partial line is only emitted when no construct

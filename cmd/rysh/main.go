@@ -1344,12 +1344,12 @@ func run(targetID string, startInAI bool) int {
 				d.Milliseconds(), res.Steps, res.ToolCalls, res.PromptTokens, res.CompletionTokens, res.CachedTokens))
 			writeMu.Lock()
 			// Exactly one blank line separates the footer from the reply:
-			// the markdown flush terminates the reply's last line (the
-			// stream always ends with a newline), so a single \r\n here is
-			// a genuine gap in every case. The leading ColorReset clears
-			// any SGR attribute (e.g. an open bold span) the reply's last
-			// styled line left behind, so the footer renders dim on every
-			// terminal instead of inheriting the reply's foreground.
+			// the flush above guarantees the reply stream ends with a
+			// newline, so a single \r\n here is a genuine gap. The leading
+			// ColorReset clears any SGR attribute (e.g. an open bold span)
+			// the reply's last styled line left behind, so the footer
+			// renders dim on every terminal instead of inheriting the
+			// reply's foreground.
 			os.Stdout.WriteString("\r\n" + screen.ColorReset + screen.ScreenDim() + line + screen.ColorReset + "\r\n")
 			writeMu.Unlock()
 		}()
@@ -1362,10 +1362,25 @@ func run(targetID string, startInAI bool) int {
 		// always ends with a newline, which is what lets the footer (and
 		// finalize) count blank-line separators reliably.
 		md := markdown.New()
+		// The flush defer runs before finalize (declared after it), so a
+		// held line lands above the fresh prompt; it is task-local and
+		// single-goroutine, so it needs no lock of its own. It also
+		// guarantees the reply ends on a fresh line: a model that stops
+		// mid-line leaves its last (already streamed) line unterminated,
+		// which Close cannot distinguish from "nothing held", so the
+		// pending state is captured before Close and a bare newline
+		// appended. The stats footer and finalize rely on this when they
+		// count blank-line separators.
 		defer func() {
-			if held := md.Close(); held != "" {
+			pending := md.Pending()
+			held := md.Close()
+			if held != "" || pending {
 				writeMu.Lock()
-				os.Stdout.WriteString(strings.ReplaceAll(held+"\n", "\n", "\r\n"))
+				if held != "" {
+					os.Stdout.WriteString(strings.ReplaceAll(held+"\n", "\n", "\r\n"))
+				} else {
+					os.Stdout.WriteString("\r\n")
+				}
 				writeMu.Unlock()
 			}
 		}()
