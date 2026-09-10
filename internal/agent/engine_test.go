@@ -147,10 +147,13 @@ func TestRunLongTaskEndToEnd(t *testing.T) {
 		t.Fatalf("WrapReason = %q, want none", res.WrapReason)
 	}
 	// Rounds 1-11 report usage chunks (sum 66); the final round has no
-	// usage chunk and falls back to the chars/4 wire estimate, so the
-	// total must exceed the reported sum but stay in a sane range.
-	if res.UsageTotal < 78 || res.UsageTotal > 400 {
-		t.Fatalf("UsageTotal = %d, want 66 reported + a small estimate", res.UsageTotal)
+	// usage chunk and falls back to the chars/4 wire estimate (which can
+	// be a few hundred for the full accumulated history), so the total
+	// must exceed the reported sum but stay in a sane range: the lower
+	// bound allows a small estimate, the upper bound (2000) still
+	// catches an estimate gone badly wrong (wrong magnitude).
+	if res.UsageTotal < 78 || res.UsageTotal > 2000 {
+		t.Fatalf("UsageTotal = %d, want 66 reported + a sane estimate", res.UsageTotal)
 	}
 	if want := "step 11"; !strings.Contains(sink.text.String(), want) && sink.text.Len() != 0 {
 		// text sink only carries model text; tool output is not streamed
