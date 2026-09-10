@@ -117,6 +117,40 @@ func TestResponsesInputFlattening(t *testing.T) {
 	}
 }
 
+func TestResponsesMidSystemFoldsIntoUserMessage(t *testing.T) {
+	// A mid-array system (shell event) must NOT be lifted into the
+	// instructions field — it folds into the next user input item, and
+	// only the leading run (sys A) reaches instructions.
+	var gotBody string
+	base := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"type\":\"response.completed\"}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	})
+	c := NewResponsesClient(&Spec{BaseURL: base, Model: config.Model{ID: "m"}})
+	ch, err := c.ChatStream(context.Background(), []ChatMessage{
+		{Role: "system", Content: "sys A"},
+		{Role: "user", Content: "do it"},
+		{Role: "system", Content: "$ ls\nok\n---"},
+		{Role: "user", Content: "what was that"},
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	for range ch {
+	}
+	// Exact match: instructions is the leading run only.
+	if !strings.Contains(gotBody, `"instructions":"sys A"`) {
+		t.Fatalf("instructions = wrong (shell event leaked in?): %s", gotBody)
+	}
+	// The shell event sits inside the following user input item.
+	if !strings.Contains(gotBody, "$ ls\\nok\\n---\\n\\nwhat was that") {
+		t.Fatalf("shell event not folded into the next user item: %s", gotBody)
+	}
+}
+
 func TestResponsesToolsRejection(t *testing.T) {
 	base := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

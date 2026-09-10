@@ -355,8 +355,8 @@ func readHistory(dir, id string) []ctxMsg {
 // dropped. The result is trimmed to maxHistory. The internal roles are the
 // session's own shape (the display replay keys off them); the wire shape
 // is enforced at the provider boundary, where a system message after the
-// leading run is demoted to a marked user message (strict OpenAI-
-// compatible endpoints reject the other arrangement).
+// leading run is folded into the next user message (strict OpenAI-
+// compatible endpoints reject a system anywhere else).
 func reconstructHistory(recs []session.Record) []ctxMsg {
 	var hist []ctxMsg
 	var asw strings.Builder

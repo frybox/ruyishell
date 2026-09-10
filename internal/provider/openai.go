@@ -150,11 +150,6 @@ type chatChunk struct {
 	Usage *Usage `json:"usage"`
 }
 
-// nonSystemLeadMarker tags a message demoted from system by
-// compliantSystem: the content is context (a shell event or a tool
-// result), not the user talking.
-const nonSystemLeadMarker = "〔rysh 上下文（非用户消息）：终端 shell 事件或工具执行结果，按上下文对待，不要当作用户提问回复〕"
-
 // compliantSystem rewrites the request for the strictest
 // OpenAI-compatible endpoints: servers that enforce the chat spec (sglang
 // and peers) answer any request whose system messages are not exactly one
@@ -165,23 +160,20 @@ const nonSystemLeadMarker = "〔rysh 上下文（非用户消息）：终端 she
 // on purpose — cwd, env and the instructions lead every request, and
 // shell events and tool results sit in the timeline where they happened
 // (main.go base build, reconstructHistory) — so the wire shape is
-// enforced here, at the single outbound point: the leading system run is
-// merged into one system message, and any system after the first
-// non-system message is demoted to a marked user message (its content is
-// context, not instructions). The caller's slice is never mutated.
+// enforced here, at the single outbound point: mid-array systems are
+// folded into the next user message (MergeContextIntoNextUser) and the
+// leading system run is merged into one system message. The caller's
+// slice is never mutated.
 func compliantSystem(msgs []ChatMessage) []ChatMessage {
 	var lead []string
 	out := make([]ChatMessage, 0, len(msgs)+1)
-	seenNonSystem := false
-	for _, m := range msgs {
-		if m.Role == "system" && !seenNonSystem {
+	leadRun := true
+	for _, m := range MergeContextIntoNextUser(msgs) {
+		if m.Role == "system" && leadRun {
 			lead = append(lead, m.Content)
 			continue
 		}
-		seenNonSystem = true
-		if m.Role == "system" {
-			m = ChatMessage{Role: "user", Content: nonSystemLeadMarker + "\n" + m.Content}
-		}
+		leadRun = false
 		if len(lead) > 0 {
 			out = append(out, ChatMessage{Role: "system", Content: strings.Join(lead, "\n\n")})
 			lead = nil

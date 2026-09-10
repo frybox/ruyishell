@@ -10,8 +10,10 @@ import (
 // beginning" on two leading systems or on any system after the first
 // non-system message (measured against sglang). compliantSystem is the
 // single outbound rewrite that keeps every endpoint working: the leading
-// system run is merged into one system message, later systems are
-// demoted to marked user messages.
+// system run is merged into one system message, and every mid-array system
+// (shell event / tool record) is folded into the next user message by
+// MergeContextIntoNextUser, so the context keeps its timeline position
+// without a system message appearing anywhere but index 0.
 func TestCompliantSystemMergesLeadingRun(t *testing.T) {
 	in := []ChatMessage{
 		{Role: "system", Content: "cwd: /x"},
@@ -35,7 +37,7 @@ func TestCompliantSystemMergesLeadingRun(t *testing.T) {
 	}
 }
 
-func TestCompliantSystemDemotesMidArray(t *testing.T) {
+func TestCompliantSystemFoldsMidArrayIntoNextUser(t *testing.T) {
 	in := []ChatMessage{
 		{Role: "system", Content: "cwd: /x"},
 		{Role: "system", Content: "instructions"},
@@ -46,7 +48,7 @@ func TestCompliantSystemDemotesMidArray(t *testing.T) {
 		{Role: "user", Content: "second prompt"},
 	}
 	out := compliantSystem(in)
-	wantRole := []string{"system", "user", "user", "assistant", "user", "user"}
+	wantRole := []string{"system", "user", "assistant", "user"}
 	if len(out) != len(wantRole) {
 		t.Fatalf("output has %d messages, want %d: %+v", len(out), len(wantRole), out)
 	}
@@ -58,18 +60,43 @@ func TestCompliantSystemDemotesMidArray(t *testing.T) {
 	if out[0].Content != "cwd: /x\n\ninstructions" {
 		t.Fatal("leading system run must merge verbatim")
 	}
-	if !strings.HasPrefix(out[2].Content, nonSystemLeadMarker) ||
-		!strings.Contains(out[2].Content, "$ cmd") {
-		t.Fatalf("demoted shell event lost its marker or content: %q", out[2].Content)
+	// "first prompt" has no preceding mid-array system: untouched.
+	if out[1].Content != "first prompt" {
+		t.Fatalf("first user message = %q, want verbatim", out[1].Content)
 	}
-	if out[4].Content != nonSystemLeadMarker+"\n[tool] exit 0" {
-		t.Fatalf("demoted tool record = %q", out[4].Content)
+	// Both the shell event and the tool record fold into the next user
+	// message ("second prompt"), in timeline order, under one lead line.
+	want := contextLeadLine + "\n$ cmd\nout\n---\n[tool] exit 0\n\nsecond prompt"
+	if out[3].Content != want {
+		t.Fatalf("folded user message = %q, want %q", out[3].Content, want)
+	}
+}
+
+func TestCompliantSystemConsecutiveMidArrayFold(t *testing.T) {
+	// Two consecutive mid-array systems (no user between them) fold into the
+	// same following user message, under one lead line, in order.
+	in := []ChatMessage{
+		{Role: "user", Content: "q"},
+		{Role: "system", Content: "$ a"},
+		{Role: "system", Content: "$ b"},
+		{Role: "user", Content: "next"},
+	}
+	out := compliantSystem(in)
+	if len(out) != 2 || out[0].Role != "user" || out[1].Role != "user" {
+		t.Fatalf("got %+v", out)
+	}
+	if out[0].Content != "q" {
+		t.Fatalf("first user changed = %q", out[0].Content)
+	}
+	want := contextLeadLine + "\n$ a\n$ b\n\nnext"
+	if out[1].Content != want {
+		t.Fatalf("folded = %q, want %q", out[1].Content, want)
 	}
 }
 
 func TestCompliantSystemSystemOnlyAfterNonSystem(t *testing.T) {
-	// No leading system at all: a later system is demoted, and no system
-	// is invented for the array's start.
+	// A mid-array system with no following user message takes the defensive
+	// path: it is kept as its own marked user message (not dropped).
 	in := []ChatMessage{
 		{Role: "user", Content: "first prompt"},
 		{Role: "system", Content: "$ cmd"},
@@ -78,13 +105,37 @@ func TestCompliantSystemSystemOnlyAfterNonSystem(t *testing.T) {
 	if len(out) != 2 || out[0].Role != "user" || out[1].Role != "user" {
 		t.Fatalf("got %+v", out)
 	}
-	if !strings.HasPrefix(out[1].Content, nonSystemLeadMarker) {
-		t.Fatalf("demoted content = %q", out[1].Content)
+	if !strings.HasPrefix(out[1].Content, contextLeadLine) || !strings.Contains(out[1].Content, "$ cmd") {
+		t.Fatalf("defensive content = %q", out[1].Content)
+	}
+}
+
+func TestCompliantSystemLeadingRunAndMidArray(t *testing.T) {
+	in := []ChatMessage{
+		{Role: "system", Content: "cwd: /x"},
+		{Role: "system", Content: "instructions"},
+		{Role: "user", Content: "first prompt"},
+		{Role: "system", Content: "$ cmd\nout\n---"},
+		{Role: "user", Content: "second prompt"},
+	}
+	out := compliantSystem(in)
+	if len(out) != 3 {
+		t.Fatalf("output has %d messages, want 3: %+v", len(out), out)
+	}
+	if out[0].Role != "system" || out[0].Content != "cwd: /x\n\ninstructions" {
+		t.Fatalf("leading system run = %+v", out[0])
+	}
+	if out[1].Role != "user" || out[1].Content != "first prompt" {
+		t.Fatalf("first user = %+v", out[1])
+	}
+	want := contextLeadLine + "\n$ cmd\nout\n---\n\nsecond prompt"
+	if out[2].Role != "user" || out[2].Content != want {
+		t.Fatalf("second user = %+v, want %q", out[2], want)
 	}
 }
 
 func TestCompliantSystemAllSystem(t *testing.T) {
-	// No non-system message: everything merges into one leading system.
+	// No non-system message: everything is the leading run, merges to one.
 	in := []ChatMessage{{Role: "system", Content: "a"}, {Role: "system", Content: "b"}}
 	out := compliantSystem(in)
 	if len(out) != 1 || out[0].Role != "system" || out[0].Content != "a\n\nb" {
@@ -100,7 +151,7 @@ func TestCompliantSystemNoOpOnCleanInput(t *testing.T) {
 	out := compliantSystem(in)
 	for i := range out {
 		if out[i].Role != in[i].Role || out[i].Content != in[i].Content {
-			t.Fatalf("spec-clean input changed at %d: %+v", i, out[i])
+			t.Fatalf("spec-clean input changed at %d: %+v", i, out)
 		}
 	}
 }

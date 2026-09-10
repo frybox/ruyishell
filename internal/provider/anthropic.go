@@ -210,6 +210,11 @@ func (c *AnthropicClient) ChatStream(ctx context.Context, messages []ChatMessage
 	for _, opt := range opts {
 		opt(&o)
 	}
+	// Fold mid-array systems (shell events, tool records) into the next user
+	// message so they keep their timeline position on the wire; only the
+	// leading system run reaches buildAnthropicMessages, which lifts it
+	// into the top-level system field.
+	messages = MergeContextIntoNextUser(messages)
 	system, msgs := buildAnthropicMessages(messages)
 	var tools []anthropicTool
 	for _, d := range o.Tools {

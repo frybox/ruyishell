@@ -184,6 +184,41 @@ func TestAnthropicDefaultMaxTokens(t *testing.T) {
 	}
 }
 
+func TestAnthropicMidSystemFoldsIntoUserMessage(t *testing.T) {
+	// A mid-array system (shell event) must NOT be hoisted into the
+	// top-level system field — it folds into the next user message, and
+	// only the leading run (sys A) reaches the top-level system field.
+	var gotBody string
+	base := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n")
+		io.WriteString(w, "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":1}}\n\n")
+	})
+	c := NewAnthropicClient(&Spec{BaseURL: base, Model: config.Model{ID: "m"}})
+	ch, err := c.ChatStream(context.Background(), []ChatMessage{
+		{Role: "system", Content: "sys A"},
+		{Role: "user", Content: "do it"},
+		{Role: "system", Content: "$ curl -v x\n200\n---"},
+		{Role: "user", Content: "what did that hit"},
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	for range ch {
+	}
+	// Exact match: the top-level system field is the leading run only.
+	if !strings.Contains(gotBody, `"system":"sys A"`) {
+		t.Fatalf("top-level system = wrong (shell event leaked in?): %s", gotBody)
+	}
+	// The shell event sits inside the following user message's text block,
+	// JSON-escaped (\n is a literal two-char sequence in the body).
+	if !strings.Contains(gotBody, "$ curl -v x\\n200\\n---\\n\\nwhat did that hit") {
+		t.Fatalf("shell event not folded into the next user message: %s", gotBody)
+	}
+}
+
 func TestAnthropicErrorStatus(t *testing.T) {
 	base := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

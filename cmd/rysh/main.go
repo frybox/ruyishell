@@ -1426,8 +1426,10 @@ func run(targetID string, startInAI bool) int {
 		// Internally the events are role "system" — the strictest
 		// OpenAI-compatible endpoints reject a system message after the
 		// leading run (sglang: "System message must be at the
-		// beginning"), so provider.compliantSystem demotes them to marked
-		// user messages on the wire. base is fixed for the task and
+		// beginning"), so on the wire the providers fold each of them into
+		// the next user message (provider.MergeContextIntoNextUser), where
+		// the shell context sits above the user's own words. base is fixed
+		// for the task and
 		// carried as TurnMsgs so the engine's L1 slimming folds old tool
 		// results across the whole request view; the in-flight turn grows
 		// inside the engine.
