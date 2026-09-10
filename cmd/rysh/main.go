@@ -1674,13 +1674,23 @@ func run(targetID string, startInAI bool) int {
 				writeMu.Unlock()
 			}
 			if err != nil {
-				// The child closed the pty: stop the startup spinner (it
-				// would otherwise keep animating past the exit).
-				writeMu.Lock()
-				startupSpin = false
-				clearSpinnerLocked()
-				writeMu.Unlock()
-				return
+				// The child closed the pty. On macOS killing a session
+				// leader revokes the slave end and the master then reads
+				// EOF until the slave is reopened — which a session switch
+				// (switchToMeta) does right after, so an EOF here is a
+				// transient mid-switch state, not the end of the pump.
+				// Exit only when rysh itself is quitting; otherwise wait
+				// briefly and keep reading so the next shell's output (and
+				// its RYSH_READY replay) is still forwarded.
+				if quitFlag.Load() {
+					writeMu.Lock()
+					startupSpin = false
+					clearSpinnerLocked()
+					writeMu.Unlock()
+					return
+				}
+				time.Sleep(50 * time.Millisecond)
+				continue
 			}
 		}
 	}()
@@ -1817,20 +1827,35 @@ func run(targetID string, startInAI bool) int {
 		// (including the one go-pty holds internally). Reopen the slave
 		// device by its path and dup2 the new fd onto the old fd number
 		// so the next shell can use the same pty.
-		if up, ok := p.(pty.UnixPty); ok {
-			oldFd := int(up.Slave().Fd())
-			// Try to reopen the slave in case the old fd was revoked.
-			if newFd, err := syscall.Open(up.Slave().Name(), syscall.O_RDWR, 0); err == nil {
-				if newFd != oldFd {
-					_ = syscall.Dup2(newFd, oldFd)
-					_ = syscall.Close(newFd)
-				}
-				// Now oldFd points to the live slave again.
-				resetPtyTermios(uintptr(oldFd))
-			} else {
-				// Fallback: try old fd anyway (may fail on macOS).
-				resetPtyTermios(up.Slave().Fd())
+		//
+		// The revoke is asynchronous: the kernel invalidates the slave's
+		// file table entries as the dying leader is reaped, and a reopen
+		// that races just ahead of it hands back a descriptor that dies a
+		// moment later — the replacement shell's start then fails with
+		// "fork/exec: bad file descriptor" even though the dup2 itself
+		// succeeded. Retry the reopen+start pair so the race cannot lose
+		// the session: each attempt gets a freshly opened slave (a second
+		// revoke cannot touch it — only the session leader's death revokes,
+		// and it is already gone), so at most the first attempt can lose.
+		reopenSlave := func() bool {
+			up, ok := p.(pty.UnixPty)
+			if !ok {
+				return false
 			}
+			oldFd := int(up.Slave().Fd())
+			newFd, err := syscall.Open(up.Slave().Name(), syscall.O_RDWR, 0)
+			if err != nil {
+				// Fallback: try the old fd anyway (may fail on macOS).
+				resetPtyTermios(up.Slave().Fd())
+				return true
+			}
+			if newFd != oldFd {
+				_ = syscall.Dup2(newFd, oldFd)
+				_ = syscall.Close(newFd)
+			}
+			// Now oldFd points to the live slave again.
+			resetPtyTermios(uintptr(oldFd))
+			return true
 		}
 
 		// Restart a fresh shell on the same pty and re-attach the wait and
@@ -1838,14 +1863,28 @@ func run(targetID string, startInAI bool) int {
 		// channel and its own error slot, and both reapers are handed the
 		// values rather than the variables they could outlive.
 		cwdTracker.Reset() // the old shell's last OSC 7 report is stale
-		c2 := p.Command(sh, args...)
-		c2.Env = shellEnv(meta.ID)
-		startErr := c2.Start()
-		c = c2
-		childExited = make(chan struct{})
-		waitErr = new(error)
-		go reap(c2, childExited, waitErr)
-		go forwardTermSignals(fwd, c2, childExited)
+		var startErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				// Give a racing revoke a moment to land before reopening.
+				time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+			}
+			if !reopenSlave() {
+				break // non-Unix pty: nothing to reopen, try Start directly
+			}
+			c2 := p.Command(sh, args...)
+			c2.Env = shellEnv(meta.ID)
+			startErr = c2.Start()
+			if startErr == nil {
+				c = c2
+				childExited = make(chan struct{})
+				waitErr = new(error)
+				go reap(c2, childExited, waitErr)
+				go forwardTermSignals(fwd, c2, childExited)
+				break
+			}
+			logWrite("sys", fmt.Sprintf("session:start attempt=%d err=%v", attempt+1, startErr))
+		}
 		if startErr != nil {
 			writeMu.Lock()
 			os.Stdout.WriteString(screen.DimGray() + "rysh: start " + sh + ": " + startErr.Error() + screen.ColorReset + "\r\n")
