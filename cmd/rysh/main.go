@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/aymanbagabas/go-pty"
@@ -1839,26 +1838,11 @@ func run(targetID string, startInAI bool) int {
 		// the session: each attempt gets a freshly opened slave (a second
 		// revoke cannot touch it — only the session leader's death revokes,
 		// and it is already gone), so at most the first attempt can lose.
-		reopenSlave := func() bool {
-			up, ok := p.(pty.UnixPty)
-			if !ok {
-				return false
-			}
-			oldFd := int(up.Slave().Fd())
-			newFd, err := syscall.Open(up.Slave().Name(), syscall.O_RDWR, 0)
-			if err != nil {
-				// Fallback: try the old fd anyway (may fail on macOS).
-				resetPtyTermios(up.Slave().Fd())
-				return true
-			}
-			if newFd != oldFd {
-				_ = syscall.Dup2(newFd, oldFd)
-				_ = syscall.Close(newFd)
-			}
-			// Now oldFd points to the live slave again.
-			resetPtyTermios(uintptr(oldFd))
-			return true
-		}
+		// reopenSlave reopens a pty slave revoked by the dying session leader
+		// (macOS). The platform-specific implementation lives in
+		// ptyslave_unix.go / ptyslave_windows.go; on Windows the stub reports
+		// nothing to do because ConPTY has no revoke.
+		reopenSlave := func() bool { return reopenSlaveFor(p) }
 
 		// Restart a fresh shell on the same pty and re-attach the wait and
 		// signal-forwarding goroutines to it. The new generation gets its own
