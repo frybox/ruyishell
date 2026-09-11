@@ -417,22 +417,40 @@ func envOverride() (Level, bool) {
 	return LNone, false
 }
 
-// detectLevel is the cached auto-detection (no env pins): COLORTERM/TERM.
+// detectLevel is the cached auto-detection (no env pins). An advertised
+// capability wins: COLORTERM, then TERM. Only a terminal that names nothing is
+// inferred from its platform markers.
 func detectLevel() Level {
 	if ct := strings.ToLower(os.Getenv("COLORTERM")); ct == "truecolor" || ct == "24bit" {
 		return LTrueColor
 	}
-	term := strings.ToLower(os.Getenv("TERM"))
-	if term == "" || term == "dumb" {
+	if term := strings.ToLower(os.Getenv("TERM")); term == "dumb" {
 		return LNone
+	} else if term != "" {
+		if strings.Contains(term, "truecolor") || strings.Contains(term, "24bit") {
+			return LTrueColor
+		}
+		// 256-color is the safe floor for any other colorful terminal: emitting
+		// 24-bit codes to a 256-only terminal would silently mangle every color,
+		// which is exactly the "unreadable on some screens" failure. We do NOT
+		// assume truecolor unless it is advertised, so a 256-color screen still
+		// gets a readable quantized palette.
+		return LAnsi256
 	}
-	if strings.Contains(term, "truecolor") || strings.Contains(term, "24bit") {
+	// Nothing is advertised. A Windows terminal emulator is launched from the
+	// GUI, so a rysh started there inherits an environment with neither TERM
+	// nor COLORTERM, and the "empty TERM means dumb" rule used to drop every
+	// color -- while the style codes written as literals survived. A reasoning
+	// block came out italic but never muted, a task-stats footer never dimmed.
+	// Windows Terminal always processes SGR and does 24-bit color; mintty (the
+	// Git-Bash window) and ConEmu are 256-color. A legacy conhost sets none of
+	// these markers and still falls through to LNone, which is right: without
+	// VT processing enabled it would print the escape bytes as text.
+	if os.Getenv("WT_SESSION") != "" {
 		return LTrueColor
 	}
-	// 256-color is the safe floor for any other colorful terminal: emitting
-	// 24-bit codes to a 256-only terminal would silently mangle every color,
-	// which is exactly the "unreadable on some screens" failure. We do NOT
-	// assume truecolor unless it is advertised, so a 256-color screen still
-	// gets a readable quantized palette.
-	return LAnsi256
+	if os.Getenv("MSYSCON") != "" || strings.EqualFold(os.Getenv("ConEmuANSI"), "ON") {
+		return LAnsi256
+	}
+	return LNone
 }
