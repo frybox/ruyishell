@@ -522,6 +522,9 @@ type progressSink struct {
 
 func (p *progressSink) OnText(delta string, reasoning bool) { p.inner.OnText(delta, reasoning) }
 func (p *progressSink) OnToolBegin(call provider.ToolCall)  { p.inner.OnToolBegin(call) }
+func (p *progressSink) OnAssistant(text string, calls []provider.ToolCall) {
+	p.inner.OnAssistant(text, calls)
+}
 func (p *progressSink) OnToolEnd(call provider.ToolCall, res Result) {
 	if res.Meta == "已拒绝" {
 		p.sub.noteDenied(strings.TrimPrefix(res.Display, "已拒绝: "))

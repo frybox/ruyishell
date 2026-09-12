@@ -400,6 +400,14 @@ func run(targetID string, startInAI bool) int {
 		activeLogMu.Unlock()
 		l.Write(kind, payload)
 	}
+	// logWriteRec appends a structured record (kind + payload + optional
+	// tool pairing) to the active session's log.
+	logWriteRec := func(rec session.Record) {
+		activeLogMu.Lock()
+		l := active.log
+		activeLogMu.Unlock()
+		l.WriteRecord(rec)
+	}
 	defer func() {
 		activeLogMu.Lock()
 		l := active.log
@@ -1422,13 +1430,14 @@ func run(targetID string, startInAI bool) int {
 		// the unified timeline — recent shell events and the prior AI
 		// turns merged chronologically so their interleaving is preserved
 		// (each shell event is its own message, in the place it happened).
-		// Internally the events are role "system" — the strictest
-		// OpenAI-compatible endpoints reject a system message after the
-		// leading run (sglang: "System message must be at the
-		// beginning"), so on the wire the providers fold each of them into
-		// the next user message (provider.MergeContextIntoNextUser), where
-		// the shell context sits above the user's own words. base is fixed
-		// for the task and
+		// Shell events are role "shell" — distinct from role "system",
+		// which is reserved for the true leading run (cwd, env,
+		// instructions). The strictest OpenAI-compatible endpoints reject a
+		// system message after the leading run (sglang: "System message
+		// must be at the beginning"), so on the wire the providers fold
+		// every shell event into the next user message
+		// (provider.MergeContextIntoNextUser), where the shell context
+		// sits above the user's own words. base is fixed for the task and
 		// carried as TurnMsgs so the engine's L1 slimming folds old tool
 		// results across the whole request view; the in-flight turn grows
 		// inside the engine.
@@ -1443,9 +1452,9 @@ func run(targetID string, startInAI bool) int {
 		shellVerbatim, shellFolded := foldShellEvents(events)
 		for _, it := range buildTimeline(shellVerbatim, hist, shellFolded) {
 			if it.ev != nil {
-				base = append(base, agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: it.ev.Format()}})
+				base = append(base, agent.TurnMsg{Msg: provider.ChatMessage{Role: "shell", Content: it.ev.Format()}})
 			} else if it.folded != "" {
-				base = append(base, agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: "以下 shell 命令较早，已折叠为一行（cwd · 命令 · 输出大小），需要细节可重跑：\n" + it.folded + "\n---\n"}})
+				base = append(base, agent.TurnMsg{Msg: provider.ChatMessage{Role: "shell", Content: "以下 shell 命令较早，已折叠为一行（cwd · 命令 · 输出大小），需要细节可重跑：\n" + it.folded + "\n---\n"}})
 			} else {
 				base = append(base, it.msg.TurnMsg)
 			}
@@ -1455,6 +1464,7 @@ func run(targetID string, startInAI bool) int {
 			writeMu:      &writeMu,
 			md:           md,
 			logWrite:     logWrite,
+			logWriteRec:  logWriteRec,
 			armSpinner:   armSpinnerLocked,
 			clearSpinner: clearSpinnerLocked,
 			aiPhase:      &aiPhase,
@@ -2710,6 +2720,11 @@ type streamSink struct {
 	writeMu  *sync.Mutex
 	md       *markdown.Renderer
 	logWrite func(kind, payload string)
+	// logWriteRec writes a structured record (kind + payload + optional
+	// tool pairing); OnAssistant and OnToolEnd use it so a rebuilt history
+	// can pair each tool result with its call. It is nil-safe: without
+	// persistence the driver installs no recorder.
+	logWriteRec func(rec session.Record)
 	// armSpinner/clearSpinner require writeMu to be held by the caller (the
 	// *Locked closures from ryshMain). armSpinner's label is "" to keep the
 	// current caption.
@@ -2793,7 +2808,11 @@ func (s *streamSink) OnToolEnd(call provider.ToolCall, res agent.Result) {
 		return
 	}
 	os.Stdout.WriteString(screen.DimGray() + "[tool] " + res.Display + screen.ColorReset + "\r\n")
-	s.logWrite("tool", agent.FedContent(call.Name, res))
+	if s.logWriteRec != nil {
+		s.logWriteRec(session.Record{Kind: "tool", P: agent.FedContent(call.Name, res), CallID: call.ID})
+	} else {
+		s.logWrite("tool", agent.FedContent(call.Name, res))
+	}
 }
 
 // taskBriefLine renders one task dispatch for the session log: the
@@ -2875,6 +2894,32 @@ func (s *streamSink) OnNotice(text string) {
 // status row it once fed is gone on the main screen, so it is a no-op now.
 func (s *streamSink) OnStatus(text string) {}
 
+// OnAssistant persists a finalized assistant turn (its text plus the native
+// tool calls it requested) atomically into the session log as one asw
+// record. The calls travel in the record's Calls field so a rebuilt history
+// can pair each tool result with the call that requested it.
+func (s *streamSink) OnAssistant(text string, calls []provider.ToolCall) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if len(calls) == 0 {
+		s.logWrite("asw", session.SanitizeStream(text))
+		return
+	}
+	rec := session.Record{
+		Kind:  "asw",
+		P:     session.SanitizeStream(text),
+		Calls: make([]session.ToolCallRecord, 0, len(calls)),
+	}
+	for _, c := range calls {
+		rec.Calls = append(rec.Calls, session.ToolCallRecord{ID: c.ID, Name: c.Name, Arguments: c.Arguments})
+	}
+	if s.logWriteRec != nil {
+		s.logWriteRec(rec)
+	} else {
+		s.logWrite("asw", session.SanitizeStream(text))
+	}
+}
+
 // OnCompact logs the finished compaction's checkpoint full text into the
 // session log (compact kind); the screen only saw the engine's notice
 // lines. The log record is forensic — reconstructHistory ignores the
@@ -2927,6 +2972,11 @@ func (s *subSink) OnText(delta string, reasoning bool) {
 }
 
 func (s *subSink) OnToolBegin(call provider.ToolCall) {}
+
+// OnAssistant is a no-op for workers: the worker's own asw records
+// (sasw) already carry the streamed text, and worker tool calls are
+// internal — only the manager's transcript pairs calls with results.
+func (s *subSink) OnAssistant(text string, calls []provider.ToolCall) {}
 
 // OnToolEnd is a no-op: individual tool executions are internal to the
 // worker subagent. The manager surface (task_output + manager's OnToolEnd)

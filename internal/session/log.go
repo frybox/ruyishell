@@ -36,6 +36,24 @@ type Record struct {
 	Ts   int64  `json:"ts"`
 	Kind string `json:"kind"`
 	P    string `json:"p"`
+	// CallID names the tool call a "tool" record answers (empty for every
+	// other kind). The asw record carries no CallID; the call requests it
+	// pairs with travel inside Calls on the preceding asw record.
+	CallID string `json:"call_id,omitempty"`
+	// Calls lists the native tool calls a finalized assistant turn
+	// requested (set on "asw" records only). It lets a rebuilt history
+	// pair each tool result with the call that requested it.
+	Calls []ToolCallRecord `json:"calls,omitempty"`
+}
+
+// ToolCallRecord is the session-log shape of one native tool call: enough
+// to rebuild the assistant message's ToolCalls verbatim. It mirrors
+// provider.ToolCall without importing the provider package (the session
+// package sits below provider on the dependency graph).
+type ToolCallRecord struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 // maxLogSize bounds messages.log before it rotates (see Log.Write).
@@ -75,10 +93,19 @@ func OpenLog(dir, id string) (*Log, error) {
 // Write appends one JSONL record, rotating the log first when it has grown
 // past maxLogSize so the session stream never grows without bound.
 func (l *Log) Write(kind, payload string) error {
+	return l.WriteRecord(Record{Ts: time.Now().UnixNano(), Kind: kind, P: payload})
+}
+
+// WriteRecord appends one JSONL record (kind, payload, and optional tool
+// pairing fields), rotating first when the log has grown past maxLogSize.
+func (l *Log) WriteRecord(rec Record) error {
 	if l == nil || l.f == nil {
 		return nil
 	}
-	b, err := json.Marshal(Record{Ts: time.Now().UnixNano(), Kind: kind, P: payload})
+	if rec.Ts == 0 {
+		rec.Ts = time.Now().UnixNano()
+	}
+	b, err := json.Marshal(rec)
 	if err != nil {
 		return err
 	}

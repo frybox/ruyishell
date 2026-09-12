@@ -200,7 +200,7 @@ func TestAnthropicMidSystemFoldsIntoUserMessage(t *testing.T) {
 	ch, err := c.ChatStream(context.Background(), []ChatMessage{
 		{Role: "system", Content: "sys A"},
 		{Role: "user", Content: "do it"},
-		{Role: "system", Content: "$ curl -v x\n200\n---"},
+		{Role: "shell", Content: "$ curl -v x\n200\n---"},
 		{Role: "user", Content: "what did that hit"},
 	})
 	if err != nil {

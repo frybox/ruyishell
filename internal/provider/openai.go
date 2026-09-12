@@ -156,14 +156,16 @@ type chatChunk struct {
 // and at the start with a 400 "System message must be at the beginning" —
 // even a leading *run* of systems is rejected (measured: sglang accepts
 // one leading system, 400s on two). Lenient endpoints (DeepSeek, OpenAI)
-// accept either shape. rysh keeps multiple systems in its internal view
-// on purpose — cwd, env and the instructions lead every request, and
-// shell events and tool results sit in the timeline where they happened
-// (main.go base build, reconstructHistory) — so the wire shape is
-// enforced here, at the single outbound point: mid-array systems are
-// folded into the next user message (MergeContextIntoNextUser) and the
-// leading system run is merged into one system message. The caller's
-// slice is never mutated.
+// accept either shape. rysh keeps multiple system messages in its internal
+// view on purpose — cwd, env and the instructions lead every request, and
+// shell events (role "shell") and tool results (role "tool") sit in the
+// timeline where they happened (main.go base build, reconstructHistory) —
+// so the wire shape is enforced here, at the single outbound point: every
+// role:"shell" event is folded into the next user message
+// (MergeContextIntoNextUser) and the leading system run is merged into
+// one system message. role:"tool" messages are real protocol messages
+// (chat completions' role:"tool" with a tool_call_id) and pass through.
+// The caller's slice is never mutated.
 func compliantSystem(msgs []ChatMessage) []ChatMessage {
 	var lead []string
 	out := make([]ChatMessage, 0, len(msgs)+1)

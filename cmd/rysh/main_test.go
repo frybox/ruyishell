@@ -55,10 +55,10 @@ func TestTrimHistory(t *testing.T) {
 		t.Fatalf("trimHistory mutated its input: %d messages, want 6", len(h))
 	}
 
-	// Tool-result system messages stay attached to their turn: trimming
+	// Tool-result messages stay attached to their turn: trimming
 	// drops the whole turn (user + assistant + trailing tool results).
 	h2 := []ctxMsg{
-		msg("user", "1"), msg("assistant", "a"), msg("system", "tool a"),
+		msg("user", "1"), msg("assistant", "a"), msg("tool", "tool a"),
 		msg("user", "2"), msg("assistant", "b"),
 	}
 	got2 := trimHistory(h2, 4)
@@ -68,7 +68,7 @@ func TestTrimHistory(t *testing.T) {
 
 	// A single turn plus its tool result fits within the cap and is kept.
 	h3 := []ctxMsg{
-		msg("user", "1"), msg("assistant", "a"), msg("system", "tool a"),
+		msg("user", "1"), msg("assistant", "a"), msg("tool", "tool a"),
 	}
 	if got3 := trimHistory(h3, 3); len(got3) != 3 || got3[2].Msg.Content != "tool a" {
 		t.Fatalf("trim single tooled turn = %+v, want all 3", got3)
@@ -648,8 +648,10 @@ func TestFmtListTime(t *testing.T) {
 
 // reconstructHistory rebuilds the conversation: usr prompts that start with
 // / or ! are skipped, contiguous asw segments merge into one assistant
-// message, rea reasoning is dropped, tool records become system messages,
-// and everything else is ignored.
+// message (with their tool calls when the asw record carried them), rea
+// reasoning is dropped, tool records become role:"tool" messages paired to
+// their call id, shk/shl records fold into the next user message, and
+// everything else is ignored.
 func TestReconstructHistory(t *testing.T) {
 	recs := []session.Record{
 		{Ts: 1000, Kind: "usr", P: "hello"},
@@ -657,8 +659,8 @@ func TestReconstructHistory(t *testing.T) {
 		{Ts: 3000, Kind: "usr", P: "!ls"},
 		{Ts: 4000, Kind: "asw", P: "part1"},
 		{Ts: 4001, Kind: "rea", P: "thinking"},
-		{Ts: 4002, Kind: "asw", P: "part2"},
-		{Ts: 5000, Kind: "tool", P: "[tool] $ ls"},
+		{Ts: 4002, Kind: "asw", P: "part2", Calls: []session.ToolCallRecord{{ID: "c1", Name: "bash", Arguments: `{"command":"ls"}`}}},
+		{Ts: 5000, Kind: "tool", P: "[tool] $ ls", CallID: "c1"},
 		{Ts: 6000, Kind: "noti", P: "已新建会话: sabc"},
 		{Ts: 7000, Kind: "sys", P: "session:switch"},
 	}
@@ -667,7 +669,50 @@ func TestReconstructHistory(t *testing.T) {
 	for _, m := range hist {
 		got = append(got, m.Msg.Role+":"+m.Msg.Content)
 	}
-	want := []string{"user:hello", "assistant:part1part2", "system:[tool] $ ls"}
+	want := []string{
+		"user:hello",
+		"assistant:part1part2",
+		"tool:[tool] $ ls",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("reconstructHistory = %v, want %v", got, want)
+	}
+	// The assistant's tool calls survive reconstruction, and the tool
+	// result is paired to its call id.
+	if len(hist) != 3 {
+		t.Fatalf("reconstructHistory returned %d messages, want 3", len(hist))
+	}
+	asw := hist[1].Msg
+	if len(asw.ToolCalls) != 1 || asw.ToolCalls[0].ID != "c1" || asw.ToolCalls[0].Name != "bash" {
+		t.Fatalf("rebuilt assistant tool calls = %+v, want [c1 bash]", asw.ToolCalls)
+	}
+	tool := hist[2].Msg
+	if tool.ToolCallID != "c1" {
+		t.Fatalf("rebuilt tool result call id = %q, want c1", tool.ToolCallID)
+	}
+}
+
+// shk/shl records (a command and its output lines) fold into the content of
+// the NEXT user message, so the commands the user ran before a turn sit
+// inside that turn's shell context rather than being dropped.
+func TestReconstructHistoryFoldsShellIntoNextUser(t *testing.T) {
+	recs := []session.Record{
+		{Ts: 1000, Kind: "usr", P: "first"},
+		{Ts: 2000, Kind: "asw", P: "reply one"},
+		{Ts: 3000, Kind: "shk", P: "echo MID_CMD"},
+		{Ts: 3001, Kind: "shl", P: "MID_CMD\n"},
+		{Ts: 4000, Kind: "usr", P: "second"},
+	}
+	hist := reconstructHistory(recs)
+	var got []string
+	for _, m := range hist {
+		got = append(got, m.Msg.Role+":"+strings.TrimSpace(m.Msg.Content))
+	}
+	want := []string{
+		"user:first",
+		"assistant:reply one",
+		"user:echo MID_CMD\nMID_CMD\n\nsecond",
+	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("reconstructHistory = %v, want %v", got, want)
 	}

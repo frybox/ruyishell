@@ -142,7 +142,7 @@ func (c *ResponsesClient) ChatStream(ctx context.Context, messages []ChatMessage
 	for _, opt := range opts {
 		opt(&o)
 	}
-	// Fold mid-array systems (shell events, tool records) into the next user
+	// Fold role:"shell" events (terminal shell events) into the next user
 	// message so they keep their timeline position on the wire; only the
 	// leading system run reaches buildResponsesInput, which lifts it into
 	// the instructions field.

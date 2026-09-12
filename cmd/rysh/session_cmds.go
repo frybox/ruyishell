@@ -351,23 +351,42 @@ func readHistory(dir, id string) []ctxMsg {
 // reconstructHistory rebuilds the AI conversation context from a session's
 // log records: usr prompts become user messages, contiguous asw segments
 // merge into one assistant message (rea reasoning is skipped), tool records
-// become system messages, and everything else (noti/sys/shl/shk) is
-// dropped. The result is trimmed to maxHistory. The internal roles are the
-// session's own shape (the display replay keys off them); the wire shape
-// is enforced at the provider boundary, where a system message after the
-// leading run is folded into the next user message (strict OpenAI-
-// compatible endpoints reject a system anywhere else).
+// become role:"tool" messages carrying the call id they answer (paired with
+// the ToolCalls the asw record carried), and shell command/output records
+// (shk/shl) fold into the content of the NEXT user message so the commands
+// the user ran sit inside the turn they preceded. Everything else
+// (noti/sys/srea/sasw/…) is dropped. The result is trimmed to maxHistory.
+// The internal roles are the session's own shape (the display replay keys
+// off them); the wire shape is enforced at the provider boundary, where a
+// system message after the leading run is folded into the next user message
+// (strict OpenAI-compatible endpoints reject a system anywhere else).
 func reconstructHistory(recs []session.Record) []ctxMsg {
 	var hist []ctxMsg
 	var asw strings.Builder
+	var aswCalls []provider.ToolCall
 	var aswTS int64
 	flush := func() {
 		if asw.Len() == 0 {
 			return
 		}
-		hist = append(hist, ctxMsg{TurnMsg: agent.TurnMsg{Msg: provider.ChatMessage{Role: "assistant", Content: asw.String()}}, ts: time.Unix(0, aswTS)})
+		msg := provider.ChatMessage{Role: "assistant", Content: asw.String()}
+		if len(aswCalls) > 0 {
+			msg.ToolCalls = aswCalls
+		}
+		hist = append(hist, ctxMsg{TurnMsg: agent.TurnMsg{Msg: msg}, ts: time.Unix(0, aswTS)})
 		asw.Reset()
+		aswCalls = nil
 		aswTS = 0
+	}
+	// shellBuf accumulates the shk/shl records (a command followed by its
+	// output lines) since the last user message; they are folded into the
+	// next user message so the model sees the commands the user ran right
+	// before that turn, not as standalone system messages.
+	var shellBuf []string
+	flushShell := func() []string {
+		s := shellBuf
+		shellBuf = nil
+		return s
 	}
 	for _, rec := range recs {
 		switch rec.Kind {
@@ -377,15 +396,35 @@ func reconstructHistory(recs []session.Record) []ctxMsg {
 			if strings.HasPrefix(text, "/") || strings.HasPrefix(text, "!") {
 				continue
 			}
+			if shell := flushShell(); len(shell) > 0 {
+				// shl output lines carry their own trailing newline, so a
+				// single "\n" separator reads as one blank line between the
+				// folded shell context and the user's actual prompt.
+				text = strings.Join(shell, "\n") + "\n\n" + text
+			}
 			hist = append(hist, ctxMsg{TurnMsg: agent.TurnMsg{Msg: provider.ChatMessage{Role: "user", Content: text}}, ts: time.Unix(0, rec.Ts)})
 		case "asw":
 			if aswTS == 0 {
 				aswTS = rec.Ts
 			}
 			asw.WriteString(rec.P)
+			if len(rec.Calls) > 0 {
+				aswCalls = make([]provider.ToolCall, 0, len(rec.Calls))
+				for _, c := range rec.Calls {
+					aswCalls = append(aswCalls, provider.ToolCall{ID: c.ID, Name: c.Name, Arguments: c.Arguments})
+				}
+			}
 		case "tool":
 			flush()
-			hist = append(hist, ctxMsg{TurnMsg: agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: rec.P}}, ts: time.Unix(0, rec.Ts)})
+			hist = append(hist, ctxMsg{TurnMsg: agent.TurnMsg{Msg: provider.ChatMessage{Role: "tool", Content: rec.P, ToolCallID: rec.CallID}}, ts: time.Unix(0, rec.Ts)})
+		case "shk", "shl":
+			// A command record or an output line: buffer it for the next
+			// user message. shk is the command line, shl its captured
+			// output (which carries its own trailing newline) — both belong
+			// in the shell context of the following turn.
+			if line := strings.TrimRight(rec.P, "\n"); strings.TrimSpace(line) != "" {
+				shellBuf = append(shellBuf, line)
+			}
 		}
 	}
 	flush()

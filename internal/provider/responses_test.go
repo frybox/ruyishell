@@ -133,7 +133,7 @@ func TestResponsesMidSystemFoldsIntoUserMessage(t *testing.T) {
 	ch, err := c.ChatStream(context.Background(), []ChatMessage{
 		{Role: "system", Content: "sys A"},
 		{Role: "user", Content: "do it"},
-		{Role: "system", Content: "$ ls\nok\n---"},
+		{Role: "shell", Content: "$ ls\nok\n---"},
 		{Role: "user", Content: "what was that"},
 	})
 	if err != nil {

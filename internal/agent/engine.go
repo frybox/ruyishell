@@ -50,6 +50,11 @@ type Sink interface {
 	// checkpoint full text. The screen sees the engine's notice lines;
 	// this hook exists for the session log.
 	OnCompact(text string)
+	// OnAssistant reports one finalized assistant turn: its text plus the
+	// native tool calls it requested, in order. The session log records it
+	// atomically so a rebuilt history pairs each call request with its
+	// result (a call and its answer are inseparable).
+	OnAssistant(text string, calls []provider.ToolCall)
 }
 
 // NopSink discards everything; useful as an embed base or for headless
@@ -64,6 +69,7 @@ func (NopSink) OnStep(int)                          {}
 func (NopSink) OnNotice(string)                     {}
 func (NopSink) OnStatus(string)                     {}
 func (NopSink) OnCompact(string)                    {}
+func (NopSink) OnAssistant(string, []provider.ToolCall) {}
 
 // Config carries the run's knobs. Zero durations fall back to the §6
 // defaults; Now is overridable so guard tests do not sleep. Jobs carries
@@ -395,6 +401,9 @@ func (e *engine) run(ctx context.Context) {
 		e.turn = append(e.turn, TurnMsg{
 			Msg: provider.ChatMessage{Role: "assistant", Content: text, ToolCalls: calls},
 		})
+		// Persist the finalized assistant turn atomically (text plus its
+		// tool calls) so a rebuilt history pairs each call with its result.
+		e.sink.OnAssistant(text, calls)
 
 		if e.wrapRound {
 			e.wrapRound = false

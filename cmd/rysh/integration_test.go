@@ -2754,13 +2754,18 @@ id = "llama3.1:8b"
 	mu.Lock()
 	msgs := last
 	mu.Unlock()
-	// Wire shape: the leading run — cwd, env, instructions, plus the
-	// BEFORE_AI event (it predates the first AI turn) — merges into one
-	// system message at the provider boundary; the MID_CMD event sits
-	// mid-conversation and is demoted to a marked user message there.
+	// Wire shape: the leading run — cwd, env, instructions — merges into
+	// one system message at the provider boundary; every shell event is
+	// role:"shell" internally and is folded by MergeContextIntoNextUser
+	// into the user message of the turn it preceded (BEFORE_AI into
+	// "question one", MID_CMD into "question two"), so no shell context
+	// leaks onto the wire as a system or standalone message.
 	if len(msgs) < 2 || msgs[0].Role != "system" || !strings.HasPrefix(msgs[0].Content, "cwd: ") ||
 		!strings.Contains(msgs[0].Content, "\n\nenv:") {
 		t.Fatalf("context preamble missing: %+v", msgs)
+	}
+	if strings.Contains(msgs[0].Content, "$ echo BEFORE_AI") || strings.Contains(msgs[0].Content, "$ echo MID_CMD") {
+		t.Fatalf("shell events leaked into the leading system message: %+v", msgs[0])
 	}
 	body := msgs
 	indexOf := func(role, content string) int {
@@ -2772,17 +2777,20 @@ id = "llama3.1:8b"
 		t.Fatalf("message role=%s containing %q not found in request: %+v", role, content, body)
 		return -1
 	}
-	iBefore := indexOf("system", "$ echo BEFORE_AI")
 	iQ1 := indexOf("user", "question one")
 	iA1 := indexOf("assistant", "the reply")
-	iMid := indexOf("user", "$ echo MID_CMD")
 	iQ2 := indexOf("user", "question two")
-	if iBefore < 0 || iMid < 0 {
-		t.Fatalf("shell events missing from timeline: before=%d mid=%d\n%+v", iBefore, iMid, body)
+	// BEFORE_AI folds into the "question one" user message (same message),
+	// MID_CMD folds into the "question two" user message (same message).
+	if !strings.Contains(body[iQ1].Content, "$ echo BEFORE_AI") {
+		t.Fatalf("BEFORE_AI not folded into question one: %+v", body[iQ1])
 	}
-	if !(iBefore < iQ1 && iQ1 < iA1 && iA1 < iMid && iMid < iQ2) {
-		t.Fatalf("timeline not chronological: before=%d q1=%d a1=%d mid=%d q2=%d\n%+v",
-			iBefore, iQ1, iA1, iMid, iQ2, body)
+	if !strings.Contains(body[iQ2].Content, "$ echo MID_CMD") {
+		t.Fatalf("MID_CMD not folded into question two: %+v", body[iQ2])
+	}
+	if !(iQ1 < iA1 && iA1 < iQ2) {
+		t.Fatalf("timeline not chronological: q1=%d a1=%d q2=%d\n%+v",
+			iQ1, iA1, iQ2, body)
 	}
 	if iQ2 != len(body)-1 {
 		t.Fatalf("current prompt should end the request: q2=%d, len=%d", iQ2, len(body))

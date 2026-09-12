@@ -10,10 +10,12 @@ import (
 // beginning" on two leading systems or on any system after the first
 // non-system message (measured against sglang). compliantSystem is the
 // single outbound rewrite that keeps every endpoint working: the leading
-// system run is merged into one system message, and every mid-array system
-// (shell event / tool record) is folded into the next user message by
+// system run is merged into one system message, and every role:"shell"
+// message (a terminal shell event) is folded into the next user message by
 // MergeContextIntoNextUser, so the context keeps its timeline position
-// without a system message appearing anywhere but index 0.
+// without a system message appearing anywhere but index 0. role:"tool"
+// messages are real protocol messages (chat completions' role:"tool" with
+// a tool_call_id) and pass through unchanged.
 func TestCompliantSystemMergesLeadingRun(t *testing.T) {
 	in := []ChatMessage{
 		{Role: "system", Content: "cwd: /x"},
@@ -37,18 +39,18 @@ func TestCompliantSystemMergesLeadingRun(t *testing.T) {
 	}
 }
 
-func TestCompliantSystemFoldsMidArrayIntoNextUser(t *testing.T) {
+func TestCompliantSystemFoldsShellIntoNextUser(t *testing.T) {
 	in := []ChatMessage{
 		{Role: "system", Content: "cwd: /x"},
 		{Role: "system", Content: "instructions"},
 		{Role: "user", Content: "first prompt"},
-		{Role: "system", Content: "$ cmd\nout\n---"}, // shell event
+		{Role: "shell", Content: "$ cmd\nout\n---"}, // shell event
 		{Role: "assistant", Content: "reply"},
-		{Role: "system", Content: "[tool] exit 0"}, // tool record
+		{Role: "tool", Content: "exit 0", ToolCallID: "call_1"}, // tool record
 		{Role: "user", Content: "second prompt"},
 	}
 	out := compliantSystem(in)
-	wantRole := []string{"system", "user", "assistant", "user"}
+	wantRole := []string{"system", "user", "assistant", "tool", "user"}
 	if len(out) != len(wantRole) {
 		t.Fatalf("output has %d messages, want %d: %+v", len(out), len(wantRole), out)
 	}
@@ -60,25 +62,30 @@ func TestCompliantSystemFoldsMidArrayIntoNextUser(t *testing.T) {
 	if out[0].Content != "cwd: /x\n\ninstructions" {
 		t.Fatal("leading system run must merge verbatim")
 	}
-	// "first prompt" has no preceding mid-array system: untouched.
+	// "first prompt" has no preceding shell message: untouched.
 	if out[1].Content != "first prompt" {
 		t.Fatalf("first user message = %q, want verbatim", out[1].Content)
 	}
-	// Both the shell event and the tool record fold into the next user
-	// message ("second prompt"), in timeline order, under one lead line.
-	want := contextLeadLine + "\n$ cmd\nout\n---\n[tool] exit 0\n\nsecond prompt"
-	if out[3].Content != want {
-		t.Fatalf("folded user message = %q, want %q", out[3].Content, want)
+	// The shell event folds into the next user message ("second prompt"),
+	// in timeline order, under one lead line.
+	want := contextLeadLine + "\n$ cmd\nout\n---\n\nsecond prompt"
+	if out[4].Content != want {
+		t.Fatalf("folded user message = %q, want %q", out[4].Content, want)
+	}
+	// The tool record is a real protocol message: it is not folded, it
+	// keeps its role and its tool_call_id.
+	if out[3].Role != "tool" || out[3].ToolCallID != "call_1" || out[3].Content != "exit 0" {
+		t.Fatalf("tool record mangled: %+v", out[3])
 	}
 }
 
-func TestCompliantSystemConsecutiveMidArrayFold(t *testing.T) {
-	// Two consecutive mid-array systems (no user between them) fold into the
+func TestCompliantSystemConsecutiveShellFold(t *testing.T) {
+	// Two consecutive shell messages (no user between them) fold into the
 	// same following user message, under one lead line, in order.
 	in := []ChatMessage{
 		{Role: "user", Content: "q"},
-		{Role: "system", Content: "$ a"},
-		{Role: "system", Content: "$ b"},
+		{Role: "shell", Content: "$ a"},
+		{Role: "shell", Content: "$ b"},
 		{Role: "user", Content: "next"},
 	}
 	out := compliantSystem(in)
@@ -94,12 +101,12 @@ func TestCompliantSystemConsecutiveMidArrayFold(t *testing.T) {
 	}
 }
 
-func TestCompliantSystemSystemOnlyAfterNonSystem(t *testing.T) {
-	// A mid-array system with no following user message takes the defensive
+func TestCompliantSystemShellOnlyAfterNonSystem(t *testing.T) {
+	// A shell message with no following user message takes the defensive
 	// path: it is kept as its own marked user message (not dropped).
 	in := []ChatMessage{
 		{Role: "user", Content: "first prompt"},
-		{Role: "system", Content: "$ cmd"},
+		{Role: "shell", Content: "$ cmd"},
 	}
 	out := compliantSystem(in)
 	if len(out) != 2 || out[0].Role != "user" || out[1].Role != "user" {
@@ -110,12 +117,12 @@ func TestCompliantSystemSystemOnlyAfterNonSystem(t *testing.T) {
 	}
 }
 
-func TestCompliantSystemLeadingRunAndMidArray(t *testing.T) {
+func TestCompliantSystemLeadingRunAndShell(t *testing.T) {
 	in := []ChatMessage{
 		{Role: "system", Content: "cwd: /x"},
 		{Role: "system", Content: "instructions"},
 		{Role: "user", Content: "first prompt"},
-		{Role: "system", Content: "$ cmd\nout\n---"},
+		{Role: "shell", Content: "$ cmd\nout\n---"},
 		{Role: "user", Content: "second prompt"},
 	}
 	out := compliantSystem(in)
@@ -131,6 +138,29 @@ func TestCompliantSystemLeadingRunAndMidArray(t *testing.T) {
 	want := contextLeadLine + "\n$ cmd\nout\n---\n\nsecond prompt"
 	if out[2].Role != "user" || out[2].Content != want {
 		t.Fatalf("second user = %+v, want %q", out[2], want)
+	}
+}
+
+func TestCompliantSystemShellBeforeFirstUserFoldsIn(t *testing.T) {
+	// A shell event before the first user message is that user's context:
+	// it folds into the first user message rather than becoming a system
+	// or a standalone wire message.
+	in := []ChatMessage{
+		{Role: "system", Content: "cwd: /x"},
+		{Role: "system", Content: "instructions"},
+		{Role: "shell", Content: "$ ls\nout\n---"},
+		{Role: "user", Content: "what is this"},
+	}
+	out := compliantSystem(in)
+	if len(out) != 2 {
+		t.Fatalf("output has %d messages, want 2: %+v", len(out), out)
+	}
+	if out[0].Role != "system" || out[0].Content != "cwd: /x\n\ninstructions" {
+		t.Fatalf("leading system run = %+v", out[0])
+	}
+	want := contextLeadLine + "\n$ ls\nout\n---\n\nwhat is this"
+	if out[1].Role != "user" || out[1].Content != want {
+		t.Fatalf("first user = %+v, want %q", out[1], want)
 	}
 }
 
