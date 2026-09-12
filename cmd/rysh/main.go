@@ -2749,7 +2749,14 @@ func (s *streamSink) OnText(delta string, reasoning bool) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if s.clearSpinner() || s.prevPhase != phase {
-		os.Stdout.WriteString("\r\n")
+		// A phase change gets its own row. Leaving the thinking phase for
+		// the answer gets a blank row too, so the reasoning block reads as
+		// a separate section instead of running straight into the reply.
+		if s.prevPhase == "thinking" && phase == "writing" {
+			os.Stdout.WriteString("\r\n\r\n")
+		} else {
+			os.Stdout.WriteString("\r\n")
+		}
 	}
 	s.prevPhase = phase
 	*s.aiPhase = phase
