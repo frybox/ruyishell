@@ -764,17 +764,38 @@ func run(targetID string, startInAI bool) int {
 			}
 			return renderSessionList(store, active.meta.ID, page, attached), nil
 		case "/history":
-			// User-input history for the current session (usr records,
-			// oldest first, newest last), paginated like /ls. -v pairs each
-			// input with the model's reply that followed it.
+			// User-input history for the current session (usr records, oldest
+			// first, newest last). Bare: a paginated list like /ls; p<页号>
+			// pages; -v pairs each input with the model's reply. A bare
+			// <编号> recalls that user input into the current input line (the
+			// number is the global index shown in the list, spanning pages).
 			page := 1
 			verbose := false
+			recallN := 0
 			for _, a := range fields[1:] {
-				if a == "-v" {
+				switch {
+				case a == "-v":
 					verbose = true
-				} else if n, err := strconv.Atoi(a); err == nil {
-					page = n
+				case len(a) > 1 && a[0] == 'p':
+					if n, err := strconv.Atoi(a[1:]); err == nil {
+						page = n
+					}
+				default:
+					if n, err := strconv.Atoi(a); err == nil {
+						recallN = n
+					}
 				}
+			}
+			if recallN > 0 {
+				item, ok := historyItemByNum(sessionsDir, active.meta.ID, recallN)
+				if !ok {
+					return []string{uiT.Get("history_no_entry", recallN)}, nil
+				}
+				// runCommand runs under writeMu, so mutating the draft here is
+				// safe: put the nth user input back on the input line (cursor
+				// at end); the drawAIPromptLocked below redraws it.
+				ai.SetDraft(item.input, len([]rune(item.input)))
+				return []string{uiT.Get("history_recall", recallN)}, nil
 			}
 			return renderHistory(sessionsDir, active.meta.ID, page, verbose), nil
 		case "/resume":

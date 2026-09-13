@@ -294,8 +294,8 @@ func renderHistory(dir, id string, page int, verbose bool) []string {
 	}
 	lines := []string{uiT.Get("history", page, pages, len(items))}
 	for i := start; i < end; i++ {
-		// 1-based index; the number is what `history <页号>` does NOT take —
-		// it is display-only (there is no per-item jump, like /ls rows).
+		// 1-based index; the number is what /history <编号> takes to recall
+		// that entry into the current input line (paging uses p<页号>).
 		lines = append(lines, fmt.Sprintf("%d. %s", i+1, items[i].input))
 		if verbose {
 			out := strings.TrimSpace(items[i].output)
@@ -317,6 +317,17 @@ func renderHistory(dir, id string, page int, verbose bool) []string {
 		lines = append(lines, uiT.Get("history_page_hint"))
 	}
 	return lines
+}
+
+// historyItemByNum returns the nth user input (1-based, the global number
+// shown in the /history list, spanning pages) for /history <编号> recall.
+// The bool is false when n is out of range.
+func historyItemByNum(dir, id string, n int) (historyItem, bool) {
+	items := historyItemsFor(dir, id)
+	if n < 1 || n > len(items) {
+		return historyItem{}, false
+	}
+	return items[n-1], true
 }
 
 // selectActiveSession chooses the startup session: the most recently

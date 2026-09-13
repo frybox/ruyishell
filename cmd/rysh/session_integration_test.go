@@ -921,6 +921,68 @@ func TestShellPasteAndUnreliableNotLogged(t *testing.T) {
 	}
 }
 
+// /history in AI mode: bare lists the session's user inputs (paginated),
+// a bare <编号> recalls that entry into the current input line, p<页号>
+// pages, -v pairs each input with its reply, and an out-of-range number
+// reports it without touching the draft.
+func TestHistoryRecallCommand(t *testing.T) {
+	home := t.TempDir()
+	id := "sjhistrec1"
+	log, err := session.OpenLog(filepath.Join(home, ".rysh", "sessions"), id)
+	if err != nil {
+		t.Fatalf("OpenLog: %v", err)
+	}
+	for _, in := range []string{"first input", "second input", "third input"} {
+		if err := log.Write("usr", in); err != nil {
+			t.Fatalf("log.Write: %v", err)
+		}
+	}
+	if err := log.Close(); err != nil {
+		t.Fatalf("log.Close: %v", err)
+	}
+
+	p, _, r := startRyshIn(t, home, sessionProfile, "", []string{"RYSH_SESSION_ID=" + id})
+	r.readUntil(t, "$ ", startupTimeout)
+	enterAI(t, p, r)
+
+	// Bare: the numbered list of the session's user inputs (the items are
+	// printed after the header, so anchor on the last item). At this point
+	// exactly 3 inputs exist; slash commands typed later also land in the
+	// list (they are recorded as usr), so no page-count is asserted beyond
+	// the first page.
+	p.Write([]byte("/history\r"))
+	out := r.readUntil(t, "3. third input", waitTimeout)
+	assertContains(t, out, "第 1/1 页")
+	assertContains(t, out, "1. first input")
+	assertContains(t, out, "2. second input")
+
+	// p<页号> pages and -v pairs each input with its reply (none written,
+	// so （无输出） under each; anchor on that marker since the ↳ and the
+	// placeholder share a line).
+	p.Write([]byte("/history p1 -v\r"))
+	out = r.readUntil(t, "（无输出）", waitTimeout)
+	assertContains(t, out, "1. first input")
+
+	// Out of range: reports the missing entry, no recall.
+	p.Write([]byte("/history 99\r"))
+	out = r.readUntil(t, "没有第 99 条用户输入", waitTimeout)
+	if strings.Contains(out, "已回填") {
+		t.Fatalf("out-of-range number must not recall: %q", out)
+	}
+
+	// A bare number recalls that entry to the current input line: the
+	// notice, then the recalled draft rendered on the AI prompt line.
+	// Last step — the recall replaces the draft, so nothing follows it.
+	// Entry 2 is still "second input" (later usr records are slash commands
+	// appended after the three inputs).
+	p.Write([]byte("/history 2\r"))
+	out = r.readUntil(t, "已回填第 2 条用户输入到当前输入行", waitTimeout)
+	out += r.readQuiet(t, settle, waitTimeout)
+	if !strings.Contains(out, "second input") {
+		t.Fatalf("recalled draft not rendered on the input line: %q", out)
+	}
+}
+
 // firstSessionID returns the name of the single session directory in home.
 func firstSessionID(t *testing.T, home string) string {
 	t.Helper()

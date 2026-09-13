@@ -616,7 +616,8 @@ func TestRenderHistory(t *testing.T) {
 	assertContains(t, p2[0], "第 2/2 页 · 共 12 条")
 	assertContains(t, p2[1], "11. input 11")
 	assertContains(t, p2[2], "12. input 12")
-	assertContains(t, p2[3], "history <页号> 翻页")
+	assertContains(t, p2[3], "history p<页号> 翻页")
+	assertContains(t, p2[3], "回填到输入行")
 	if len(p2) != 4 {
 		t.Fatalf("page 2 = %d lines, want 4 (header + 2 + hint): %q", len(p2), p2)
 	}
@@ -627,6 +628,24 @@ func TestRenderHistory(t *testing.T) {
 	empty := renderHistory(dir, "no-such-id", 1, false)
 	if len(empty) != 1 || !strings.Contains(empty[0], "共 0 条") {
 		t.Fatalf("empty history = %q, want a single 共 0 条 line", empty)
+	}
+
+	// historyItemByNum indexes the global list (spanning pages): 1-based,
+	// out of range (and unknown sessions) report false.
+	item, ok := historyItemByNum(dir, "histr0", 2)
+	if !ok || item.input != "second input" {
+		t.Fatalf("historyItemByNum(2) = %q, ok=%v, want second input/true", item.input, ok)
+	}
+	if item, ok := historyItemByNum(dir, "histpg0", 12); !ok || item.input != "input 12" {
+		t.Fatalf("historyItemByNum(12) = %q, ok=%v, want input 12/true", item.input, ok)
+	}
+	for _, n := range []int{0, -1, 13} {
+		if _, ok := historyItemByNum(dir, "histpg0", n); ok {
+			t.Fatalf("historyItemByNum(%d) ok, want false (12 entries)", n)
+		}
+	}
+	if _, ok := historyItemByNum(dir, "no-such-id", 1); ok {
+		t.Fatal("historyItemByNum on unknown session ok, want false")
 	}
 }
 
