@@ -1151,19 +1151,28 @@ func run(targetID string, startInAI bool) int {
 		writeMu.Unlock()
 		// Resync: bring the shell's own prompt back onto the line the AI
 		// prompt occupied, so switching back changes only the PS1 text and
-		// the cursor shape, never the input line's position. Shells with a
-		// line editor (bash, zsh, fish, ksh) repaint their prompt in place
-		// when their controlling terminal is resized, so rysh nudges the
-		// child pty width and the shell redraws its prompt on the erased
-		// block's row. Plain shells (dash) have no line editor: a bare \r
-		// makes them execute the empty line and print the next prompt one
-		// row below, so rysh first moves the real cursor one row up to keep
-		// that prompt on the erased block's row too.
+		// the cursor shape, never the input line's position. A shell that
+		// repaints its prompt when the controlling terminal is resized - the
+		// readline family, and PowerShell through PSReadLine - is nudged one
+		// column narrower and back, which makes it redraw its prompt on the
+		// erased block's row. The repaint fixes more than the prompt's row:
+		// such a shell caches the row it wrote its prompt on and re-emits the
+		// input line at that absolute row on every keystroke, so a resync
+		// that moves the cursor without moving that cache leaves the two out
+		// of step and every later edit lands a row off - under PowerShell,
+		// typing "exit" painted "ex" on the prompt row and "exi" one row
+		// below it. Only a repaint the shell performs itself re-anchors the
+		// cached row, which is why the shell is resized rather than moved by
+		// rysh. Plain shells (dash, cmd.exe) keep no such cache and do not
+		// repaint on resize: a bare \r makes them execute the empty line and
+		// print the next prompt one row below, so rysh first moves the real
+		// cursor one row up to keep that prompt on the erased block's row.
 		resyncStart := time.Now()
-		if lineEditorShell(sh) && width > 2 {
+		if width > 2 && (lineEditorShell(sh) || isPowershell(sh)) {
 			_ = p.Resize(width-1, height)
-			// A line-editor shell coalesces back-to-back SIGWINCHes and
-			// only re-reads the size once, so the width would come back
+			// A shell that repaints on resize coalesces back-to-back size
+			// changes and only re-reads the size once, so the width would
+			// come back
 			// unchanged and no repaint would happen. Pausing between the
 			// two resizes lets the shell process the first change and
 			// redraw its prompt before the width is restored.
@@ -2606,13 +2615,19 @@ const outputPollInterval = 2 * time.Millisecond
 // a mode switch.
 const resizeRepaintWait = 40 * time.Millisecond
 
-// lineEditorShell reports whether the login shell repaints its prompt in
-// place when its controlling terminal is resized. Shells with a line editor
-// (bash, zsh, fish, ksh, mksh) do; plain shells such as dash do not, so
-// leaveAI uses a resize-triggered repaint for the former and a carriage
-// return for the latter. The same binaries are named bash.exe on Windows, so
-// the suffix is trimmed before comparing (an extensionless sh stays a plain
-// shell there too).
+// lineEditorShell reports whether the login shell is a readline-style line
+// editor: one that repaints its prompt in place when the controlling terminal
+// is resized, and that reads the editing keys leaveAI relies on (^A for the
+// line start, ^K to kill the line, the arrows to move within it) the way
+// readline defines them. bash, zsh, fish, ksh and mksh are. Plain shells such
+// as dash and cmd.exe have neither, so leaveAI resyncs them with a carriage
+// return plus a row-up move instead of a resize, and clears their line with ^U
+// alone. PowerShell is deliberately not in this set either: PSReadLine does
+// repaint on resize (leaveAI handles that on its own arm) but it binds ^K to a
+// different command, so ^A ^K leaves the kill echoed as a literal control
+// character instead of clearing the line. The same binaries are named bash.exe
+// on Windows, so the suffix is trimmed before comparing (an extensionless sh
+// stays a plain shell there too).
 func lineEditorShell(path string) bool {
 	name := strings.TrimSuffix(strings.ToLower(filepath.Base(path)), ".exe")
 	switch name {
