@@ -5,10 +5,17 @@ package main
 import (
 	"os"
 	"syscall"
+	"time"
 )
 
 // Windows console delivers size changes as console events rather than
-// SIGWINCH; pty resizing on Windows is a follow-up.
+// SIGWINCH, so winchSignals stays empty. rysh polls the real console
+// size instead (winchPollInterval in main.go): the ConPTY shell inside
+// it must be resized to follow, or line editors (PSReadLine, readline)
+// repaint their input line at absolute positions computed from the
+// stale size - visibly jumping rows.
+func winchPollInterval() time.Duration { return 500 * time.Millisecond }
+
 func winchSignals() []os.Signal {
 	return nil
 }

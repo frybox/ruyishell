@@ -901,12 +901,31 @@ func run(targetID string, startInAI bool) int {
 	writeMu.Unlock()
 	applySize()
 
-	// Resize the pty when the outer terminal changes size.
+	// Resize the pty when the outer terminal changes size. Unix terminals
+	// deliver SIGWINCH; Windows delivers no signal for it, so the Windows
+	// build adds a poller (winchPollInterval) that re-reads the real size
+	// and resizes the ConPTY. Without this the ConPTY size goes stale and
+	// line editors inside the shell (PSReadLine, readline) repaint their
+	// input line at absolute positions computed from the stale size - the
+	// input line visibly jumps to the wrong row/column.
 	winch := make(chan os.Signal, 1)
 	if sigs := winchSignals(); len(sigs) > 0 {
 		signal.Notify(winch, sigs...)
 		defer signal.Stop(winch)
 	}
+	go func() {
+		if d := winchPollInterval(); d > 0 {
+			ticker := time.NewTicker(d)
+			defer ticker.Stop()
+			lastW, lastH, _ := term.GetSize(int(os.Stdout.Fd()))
+			for range ticker.C {
+				if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil && (w != lastW || h != lastH) {
+					lastW, lastH = w, h
+					applySize()
+				}
+			}
+		}
+	}()
 	go func() {
 		for range winch {
 			applySize()

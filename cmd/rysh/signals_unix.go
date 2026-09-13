@@ -12,6 +12,10 @@ func winchSignals() []os.Signal {
 	return []os.Signal{syscall.SIGWINCH}
 }
 
+// winchPollInterval returns 0 on Unix: SIGWINCH delivers resize events,
+// so no polling fallback is needed.
+func winchPollInterval() time.Duration { return 0 }
+
 func forwardSignals() []os.Signal {
 	return []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP}
 }
