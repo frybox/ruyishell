@@ -1908,6 +1908,14 @@ func run(targetID string, startInAI bool) int {
 		// channel and its own error slot, and both reapers are handed the
 		// values rather than the variables they could outlive.
 		cwdTracker.Reset() // the old shell's last OSC 7 report is stale
+		// The old shell generation is dead and its pty is being handed to the
+		// new session's shell: drop its in-memory shell-event ring and
+		// in-progress line so the old session's commands do not bleed into
+		// the new session's AI context (buildTimeline folds rec.Events()
+		// into whatever session is active next). The ring is the in-memory
+		// source of truth for unflushed shell events, so it must not survive
+		// a session switch the way active.hist (rebuilt from disk below) does.
+		rec.Reset()
 		var startErr error
 		for attempt := 0; attempt < 3; attempt++ {
 			if attempt > 0 {

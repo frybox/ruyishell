@@ -169,6 +169,39 @@ func TestRingEviction(t *testing.T) {
 	}
 }
 
+// Reset drops the event ring and the in-progress line so a session switch
+// does not carry the old session's shell events into the new session's AI
+// context: the ring empties, the half-typed line is gone, and recording
+// works cleanly from scratch afterwards.
+func TestResetClearsRingAndLine(t *testing.T) {
+	r := New()
+	r.Type('l')
+	r.Enter("/old")
+	r.Output([]byte("old output"))
+	r.Abort()
+	if len(r.Events()) != 1 {
+		t.Fatalf("setup: events = %d, want 1", len(r.Events()))
+	}
+	// A half-typed line on the (now old) shell is dropped too.
+	r.Type('l')
+	r.Type('s')
+	r.Reset()
+	if evs := r.Events(); len(evs) != 0 {
+		t.Fatalf("reset did not clear the ring: %+v", evs)
+	}
+	if line := r.Line(); line != "" {
+		t.Fatalf("reset did not clear the in-progress line: %q", line)
+	}
+	// Recording works from a clean slate.
+	r.Type('l')
+	r.Type('s')
+	r.Enter("/new")
+	evs := r.Events()
+	if len(evs) != 1 || evs[0].Command != "ls" || evs[0].Dir != "/new" {
+		t.Fatalf("recording after reset = %+v, want a single ls in /new", evs)
+	}
+}
+
 func TestFormatStripsANSIAndCarriesCWD(t *testing.T) {
 	r := New()
 	r.Type('l')
