@@ -334,6 +334,32 @@ func TestOverflowCompactsOnceAndTwiceFatal(t *testing.T) {
 	}
 }
 
+// TestAbsorbWindow: an overflow refusal raises the run's window to the
+// provider's real limit (the only source that tracks a server restarted
+// with a different -c); a smaller or absent number never downgrades it.
+func TestAbsorbWindow(t *testing.T) {
+	body := `{"error":{"code":400,"message":"request (760298 tokens) exceeds the available context size (262144 tokens)","n_ctx":262144,"n_prompt_tokens":760298,"type":"exceed_context_size_error"}}`
+	cases := []struct {
+		name   string
+		cfg    int
+		oe     *provider.OverflowError
+		want   int
+	}{
+		{"unconfigured raises", 0, &provider.OverflowError{Body: body}, 262144},
+		{"larger raises", 8192, &provider.OverflowError{Body: body}, 262144},
+		{"equal keeps", 262144, &provider.OverflowError{Body: body}, 262144},
+		{"smaller ignores", 999999, &provider.OverflowError{Body: body}, 999999},
+		{"no number keeps", 4096, &provider.OverflowError{Body: "too many tokens in request"}, 4096},
+	}
+	for _, c := range cases {
+		e := &engine{cfg: Config{ContextWindow: c.cfg}}
+		e.absorbWindow(c.oe)
+		if e.cfg.ContextWindow != c.want {
+			t.Fatalf("%s: window = %d, want %d", c.name, e.cfg.ContextWindow, c.want)
+		}
+	}
+}
+
 // TestCompactFileInventory: successful read/write targets accumulate
 // into the checkpoint's mechanical section; failed and unrelated calls
 // do not.

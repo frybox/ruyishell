@@ -80,6 +80,17 @@ func (e *engine) windowTokens() int {
 	return compactEstWindow
 }
 
+// absorbWindow raises the window to the limit the provider named in its
+// overflow refusal. The error body is the only always-fresh source of the
+// real limit — it tracks a server restarted with a different -c, which a
+// static config cannot — so the window tracks it upward. Only raises,
+// never lowers (a smaller later value is ignored, not a downgrade).
+func (e *engine) absorbWindow(oe *provider.OverflowError) {
+	if w := oe.OverflowContext(); w > e.cfg.ContextWindow {
+		e.cfg.ContextWindow = w
+	}
+}
+
 // compactCheck is the soft trigger, evaluated at a round boundary: when
 // the last measured request passed compactSoftPct of the window, the run
 // compacts once; the hysteresis gate re-arms only after the request

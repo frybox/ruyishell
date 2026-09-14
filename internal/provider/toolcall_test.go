@@ -185,6 +185,12 @@ func TestIsContextOverflowPhrases(t *testing.T) {
 		"please reduce the length of your messages",
 		"this model's context window is full",
 	}
+	// llama.cpp / llama-server overflow must also classify as overflow:
+	yes = append(yes,
+		`request (760298 tokens) exceeds the available context size (262144 tokens)`,
+		`{"type":"exceed_context_size_error"}`,
+		`"n_ctx":262144`,
+	)
 	no := []string{
 		"",
 		"invalid api key",
@@ -199,6 +205,24 @@ func TestIsContextOverflowPhrases(t *testing.T) {
 	for _, s := range no {
 		if isContextOverflow(s) {
 			t.Fatalf("isContextOverflow(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestOverflowContextExtract(t *testing.T) {
+	// Each case is the real-world 400 body the provider returned; the
+	// expected value is the context window the engine should raise to.
+	cases := []struct {
+		body string
+		want int
+	}{
+		{`{"error":{"code":400,"message":"request (760298 tokens) exceeds the available context size (262144 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":760298,"n_ctx":262144}}`, 262144},
+		{`This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens.`, 8192},
+		{`too many tokens in request`, 0}, // no number named
+	}
+	for _, c := range cases {
+		if got := (&OverflowError{Body: c.body}).OverflowContext(); got != c.want {
+			t.Fatalf("OverflowContext(%q) = %d, want %d", c.body, got, c.want)
 		}
 	}
 }

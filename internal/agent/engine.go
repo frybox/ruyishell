@@ -381,13 +381,16 @@ func (e *engine) run(ctx context.Context) {
 		text, calls, _, fatal := e.streamRound(ctx, req)
 		if fatal != nil {
 			var oe *provider.OverflowError
-			if errors.As(fatal, &oe) && !e.overflowCompacted {
-				// M7.6: the provider refused the request as too long —
-				// compact once and retry the round on the compacted
-				// view; a second overflow stays fatal.
-				e.overflowCompacted = true
-				if e.compactForOverflow(ctx) {
-					continue
+			if errors.As(fatal, &oe) {
+				e.absorbWindow(oe)
+				if !e.overflowCompacted {
+					// M7.6: the provider refused the request as too long —
+					// compact once and retry the round on the compacted
+					// view; a second overflow stays fatal.
+					e.overflowCompacted = true
+					if e.compactForOverflow(ctx) {
+						continue
+					}
 				}
 			}
 			e.fatal = fatal

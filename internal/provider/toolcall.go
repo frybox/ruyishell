@@ -3,7 +3,9 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -156,6 +158,43 @@ var overflowPhrases = []string{
 	"too many tokens",
 	"prompt is too long",
 	"reduce the length",
+	// llama.cpp / llama-server: `request (N tokens) exceeds the available
+	// context size (M tokens)` and the exceed_context_size_error type.
+	"exceeds the available context",
+	"exceed_context_size",
+	"n_ctx",
+}
+
+// overflowCtxPatterns extract the provider's context limit from a 400 body:
+// the llama.cpp `n_ctx` field, an explicit `context_length`, or a plain
+// "N tokens" limit. They are tried in order and the first positive match
+// wins.
+var overflowCtxPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`"n_ctx"\s*:\s*(\d+)`),
+	regexp.MustCompile(`"context_length"\s*:\s*(\d+)`),
+	// "maximum context length is N tokens" (OpenAI/vLLM); the anchor keeps
+	// it from grabbing a bare prompt-size number.
+	regexp.MustCompile(`(?i)context length[^0-9]{0,20}(\d[\d,]*)`),
+}
+
+// OverflowContext extracts the provider's context window (in tokens) from
+// the overflow refusal body, or 0 when it names no number. The error body
+// is the only always-fresh source of the limit — it tracks a server
+// restarted with a different -c, which a static config cannot — so the
+// caller raises its window to this value (and only raises, never lowers).
+func (e *OverflowError) OverflowContext() int {
+	body := e.Body
+	for _, re := range overflowCtxPatterns {
+		m := re.FindStringSubmatch(body)
+		if len(m) < 2 {
+			continue
+		}
+		n, _ := strconv.Atoi(strings.ReplaceAll(m[1], ",", ""))
+		if n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 // isContextOverflow reports whether a 400 body reads as a context-length
