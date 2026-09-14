@@ -18,6 +18,8 @@ One more thing: every configuration change in ruyishell is hot — it takes effe
 
 And one scenario that always bugged me: mid-work, I want the current session to move to a different directory (`cd`). With other agent tools, the only way is to exit the session, change directories, and restart — at which point it is a brand-new session. In ruyishell, you can simply switch to shell mode, `cd` to wherever you want, and switch back to AI mode: the current directory has changed, and the session is still the same session.
 
+And another everyday scenario: a command fails — a program crashes at runtime, a build breaks, the screen is full of error output. The old habit is to select the error text, copy it, paste it into some coding agent and ask "what does this mean and how do I fix it?" In ruyishell, just press Space to switch to AI mode and ask "what does this error mean, and how do I fix it?" — ruyishell already knows the command you just ran in the shell and its output; the context is right there, no copy-paste needed.
+
 ## Quick Start
 
 `rysh` is your existing shell plus an AI copilot sharing the same screen. It does **not** replace your terminal or your shell: it launches your usual shell (bash/zsh/fish/...) and lets you step into an AI mode on the very same input line. Your half-typed command travels with you across the switch, the AI can read your shell history and current directory, and stepping back returns your draft to the prompt.
