@@ -6,6 +6,7 @@ import (
 	"syscall"
 
 	"github.com/aymanbagabas/go-pty"
+	"golang.org/x/sys/unix"
 )
 
 // reopenSlaveFor reopens a pty slave whose descriptor the dying session
@@ -28,7 +29,7 @@ func reopenSlaveFor(p pty.Pty) bool {
 		return true
 	}
 	if newFd != oldFd {
-		_ = syscall.Dup2(newFd, oldFd)
+		_ = unix.Dup2(newFd, oldFd)
 		_ = syscall.Close(newFd)
 	}
 	// Now oldFd points to the live slave again.
