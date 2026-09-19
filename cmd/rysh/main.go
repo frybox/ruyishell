@@ -1922,9 +1922,13 @@ func run(targetID string, startInAI bool) int {
 				// Give a racing revoke a moment to land before reopening.
 				time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
 			}
-			if !reopenSlave() {
-				break // non-Unix pty: nothing to reopen, try Start directly
-			}
+			// On a pty that cannot be reopened (ConPTY on Windows) the reopen
+			// reports false: there is nothing to reopen, so fall through and
+			// start the shell on the pty as it is. Breaking out here would
+			// skip the Start below and leave childExited pointing at the dead
+			// shell's closed channel, which the main loop reads as "the shell
+			// exited" and quits rysh.
+			reopenSlave()
 			c2 := p.Command(sh, args...)
 			c2.Env = shellEnv(meta.ID)
 			startErr = c2.Start()

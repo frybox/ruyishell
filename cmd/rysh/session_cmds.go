@@ -377,7 +377,7 @@ func reconstructHistory(recs []session.Record) []ctxMsg {
 	var aswCalls []provider.ToolCall
 	var aswTS int64
 	flush := func() {
-		if asw.Len() == 0 {
+		if asw.Len() == 0 && len(aswCalls) == 0 {
 			return
 		}
 		msg := provider.ChatMessage{Role: "assistant", Content: asw.String()}

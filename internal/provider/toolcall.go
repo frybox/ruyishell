@@ -129,6 +129,12 @@ func (e *ToolsUnsupportedError) Error() string {
 // (OpenAI "Invalid parameter: tools", ollama "tool calls are not supported",
 // vLLM "\"tools\" is not supported" etc.).
 func isToolsRejection(body string) bool {
+	// DeepSeek returns "Messages with role 'tool' must be a response
+	// to a preceding message with 'tool_calls'" 鈥?a sequence error,
+	// not a tools rejection. Exclude it to avoid false positives.
+	if strings.Contains(body, "must be a response to a preceding message with") {
+		return false
+	}
 	return strings.Contains(strings.ToLower(body), "tool")
 }
 
