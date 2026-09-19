@@ -2168,17 +2168,26 @@ mainloop:
 			// alternate-screen flag alone would miss foreground programs
 			// that never enter the alternate screen.
 			fg := !fs && shellInForeground(p.Fd(), shellPid())
+			// On Windows, shellInForeground always reports true (no TIOCGPGRP),
+			// so fg never drops while a foreground child (less, git log, etc.)
+			// runs outside the alternate screen. Use the child pty's output
+			// recency as a proxy: if output arrived within 150 ms, the child
+			// is still active (paging, running), so treat fg as false — a
+			// Space key belongs to that child, not to a mode-switch gesture.
+			if runtime.GOOS == "windows" && time.Since(time.Unix(0, shellOutAt.Load())) < 150*time.Millisecond {
+				fg = false
+			}
 			// The fresh-prompt space gesture only applies when the shell itself
 			// owns the keyboard (fg): while a foreground child runs (less, ssh,
 			// an interactive program) a space belongs to that child, so it is
 			// forwarded, never interpreted as a mode switch.
 			isSwitch := ev.Kind == keys.CtrlTab || (ev.Kind == keys.Rune && ev.R == ' ' && fg && !fwdSinceNewline && !rec.InPaste())
-			// On Windows the foreground process group is not detectable, so fg
-			// falls back to "not in the alternate screen". There a fresh prompt
-			// (fwdSinceNewline false) always allows the switch so a stale
-			// alternate-screen reading can never strand the user; a line the
-			// user has already typed keeps the gate so typed spaces forward
-			// normally.
+			// On Windows the foreground process group is not detectable via ioctl,
+			// so fg (above) adds a child-output recency proxy (150 ms window).
+			// When that proxy says the child is busy, a fresh prompt's Space
+			// is forwarded instead of switching. A stale alternate-screen
+			// reading can never strand the user because the recency window is
+			// short and typed text keeps fwdSinceNewline true anyway.
 			if foregroundBlocksSwitch(isSwitch, fg, fwdSinceNewline, runtime.GOOS == "windows") {
 				noticeLine(uiT.Get("switch_blocked_fg"))
 				continue
