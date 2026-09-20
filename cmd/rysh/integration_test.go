@@ -1755,6 +1755,7 @@ id = "llama3.1:8b"
 
 	p, _, r := startRyshWithConfig(t, cfg)
 	r.readUntil(t, "$ ", startupTimeout)
+	id1 := lastCreatedID(t, os.Getenv("HOME"))
 	enterAI(t, p, r)
 
 	// Turn 1: the echoed prompt and the streamed answer appear in the
@@ -1774,11 +1775,14 @@ id = "llama3.1:8b"
 	assertContains(t, follow, "\x1b[35m[AI]:")
 	assertContains(t, follow, "what about hidden files?")
 
-	// /new creates a fresh session and switches to it: the confirmation is
-	// printed and the next request carries no history.
+	// /new creates a fresh session and switches to it: the landing block
+	// (blank line, separator, blank line) is printed and the next request
+	// carries no history.
 	p.Write([]byte("/new\r"))
-	got := r.readUntil(t, "已新建会话", waitTimeout)
-	assertContains(t, got, "已新建会话")
+	id2 := waitForNewSessionID(t, os.Getenv("HOME"), id1, 5*time.Second)
+	got := r.readUntil(t, "切换到会话 "+id2, waitTimeout)
+	got += r.readUntil(t, "\x1b[35m[AI]:", waitTimeout)
+	assertFreshSwitchBlock(t, got, id2)
 	p.Write([]byte("and symlinks?\r"))
 	after := r.readUntil(t, "\x1b[38;5;117mls -l\x1b[0m", waitTimeout)
 	assertContains(t, after, "\x1b[35m[AI]:")

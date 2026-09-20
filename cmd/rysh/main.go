@@ -750,7 +750,9 @@ func run(targetID string, startInAI bool) int {
 				return []string{"rysh: " + err.Error()}, nil
 			}
 			_ = store.TouchUpdated(m.ID)
-			return nil, &switchReq{meta: m, notice: uiT.Get("created_session", m.ID)}
+			// No notice: the landing separator (which names the new id)
+			// is the whole confirmation.
+			return nil, &switchReq{meta: m}
 		case "/ls":
 			page := 1
 			if len(fields) > 1 {
@@ -1969,22 +1971,37 @@ func run(targetID string, startInAI bool) int {
 			_ = store.TouchUpdated(meta.ID)
 		}
 
-		// Per-session state reset: the separator and the tail replay below
-		// continue the stream where the dead shell left the cursor.
+		// Per-session state reset: the switch block below continues the
+		// stream where the dead shell left the cursor.
 		writeMu.Lock()
 		// Both modes: print a separator and replay the unified timeline so
-		// the terminal scrollback carries the session's conversation.
+		// the terminal scrollback carries the session's conversation. The
+		// block is fenced off by a blank line above and below it, so a
+		// switch reads as its own block instead of running into the row
+		// the previous session (or the echoed /new) left behind, and the
+		// landing prompt never sits flush against the replay.
 		dir := ""
 		if store != nil {
 			dir = store.SessionsDir()
 		}
 		count := sessionMessageCount(dir, meta.ID)
-		os.Stdout.WriteString(replaySeparator(meta, count))
+		if landInAI {
+			// The submit redrew the (now empty) AI input line and left the
+			// cursor on it: erase it, and let the row break below turn
+			// that abandoned prompt line into the blank line fencing the
+			// block from above, rather than a second prompt dangling over
+			// the separator.
+			os.Stdout.WriteString("\r" + screen.EraseToEOL())
+		}
+		// Shell mode (and the AI case after the erase above): break the
+		// line so the block opens on a blank row. The cursor there is on
+		// the shell's own prompt line, which must not be erased.
+		os.Stdout.WriteString("\r\n" + replaySeparator(meta, count) + "\r\n")
 		if replay := renderUnifiedReplay(dir, meta.ID, replayTailLines); replay != "" {
 			os.Stdout.WriteString(strings.ReplaceAll(replay, "\n", "\r\n"))
 		}
 		if notice != "" {
-			os.Stdout.WriteString(screen.DimGray() + notice + screen.ColorReset + "\r\n")
+			os.Stdout.WriteString("\r\n" + screen.DimGray() + notice + screen.ColorReset + "\r\n")
 			logWrite("noti", aiui.Sanitize(notice))
 		}
 		// The title carries the session id: follow the switch.
@@ -1994,7 +2011,9 @@ func run(targetID string, startInAI bool) int {
 		// The notice is part of the streamed history, so it is printed before
 		// the AI input line is drawn: the input line must always be the last
 		// thing on the screen, or the user types below a prompt that is no
-		// longer where the cursor is.
+		// longer where the cursor is. A blank line separates it from the
+		// switch block above.
+		os.Stdout.WriteString("\r\n")
 		if landInAI {
 			st.ToAI()
 			os.Stdout.WriteString("\r" + screen.EraseToEOL())

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/aymanbagabas/go-pty"
 	"github.com/charmbracelet/x/ansi"
 
+	"ruyishell/internal/screen"
 	"ruyishell/internal/session"
 )
 
@@ -304,6 +306,37 @@ func assertNoAltScreen(t *testing.T, r *ptyReader) {
 	t.Helper()
 	if n := strings.Count(string(r.all), "\x1b[?1049h"); n != 0 {
 		t.Fatalf("alternate screen entered %d times, want 0 (main screen only)", n)
+	}
+}
+
+// assertFreshSwitchBlock checks the landing block of an AI-mode /new: the
+// abandoned empty AI input line is erased and left as a blank row, the dim
+// separator names the new session, a blank row follows it, and the landing
+// prompt comes next — with no created-session notice line of its own. The
+// assertions are on the raw stream (\r\n row breaks and the erase), because
+// escape-stripped text cannot tell a blank row from an erased one. out is the
+// window covering the block.
+func assertFreshSwitchBlock(t *testing.T, out, id string) {
+	t.Helper()
+	if v := visible(out); strings.Contains(v, "已新建会话") {
+		t.Fatalf("switch printed a separate created-session notice: %q", v)
+	}
+	if !strings.Contains(visible(out), "切换到会话 "+id) {
+		t.Fatalf("switch block does not name the new session %s: %q", id, visible(out))
+	}
+	// The row above the separator is the abandoned AI input line, erased and
+	// then broken: the erase and the row break sit directly before the
+	// separator's opening dash run (only its SGR may come between).
+	head := regexp.MustCompile(regexp.QuoteMeta(screen.EraseToEOL()) + `\r\n(?:\x1b\[[0-9;]*m)*` +
+		regexp.QuoteMeta("──── 切换到会话 "+id))
+	if !head.MatchString(out) {
+		t.Fatalf("row above the separator %q is not a blanked input line: %q", id, visible(out))
+	}
+	// The separator's row ends and the next row is blank (the row the landing
+	// prompt is drawn on).
+	tail := regexp.MustCompile(regexp.QuoteMeta("────") + `(?:\x1b\[[0-9;]*m)*\r\n\r\n`)
+	if !tail.MatchString(out) {
+		t.Fatalf("switch block %q is not followed by a blank row and the prompt: %q", id, visible(out))
 	}
 }
 
@@ -621,12 +654,10 @@ func TestAISlashCommands(t *testing.T) {
 	}
 
 	p.Write([]byte("/new\r"))
-	r.readUntil(t, "已新建会话: ", waitTimeout)
-	id2 := lastCreatedID(t, home)
-	if id2 == id1 {
-		t.Fatalf("/new did not create a new session (id %s twice)", id2)
-	}
-	waitForAll(t, r, startupTimeout, "已新建会话: "+id2)
+	id2 := waitForNewSessionID(t, home, id1, 5*time.Second)
+	out = r.readUntil(t, "切换到会话 "+id2, waitTimeout)
+	out += r.readUntil(t, "\x1b[35m[AI]:", waitTimeout)
+	assertFreshSwitchBlock(t, out, id2)
 
 	p.Write([]byte("/ls\r"))
 	out = r.readUntil(t, "本实例", waitTimeout)
@@ -655,13 +686,12 @@ func TestSessionLogsIsolated(t *testing.T) {
 	r.readUntil(t, "\x1b[35m[AI]:", waitTimeout) // prompt redraws after finalize
 
 	p.Write([]byte("/new\r"))
-	r.readUntil(t, "已新建会话: ", waitTimeout)
-	id2 := lastCreatedID(t, home)
-	if id2 == id1 {
-		t.Fatalf("/new did not create a new session (id %s twice)", id2)
-	}
-	// The fresh session's AI prompt names the model it will answer with (§3.3).
-	r.readUntil(t, "ollama/llama3.1:8b", waitTimeout)
+	id2 := waitForNewSessionID(t, home, id1, 5*time.Second)
+	out := r.readUntil(t, "切换到会话 "+id2, waitTimeout)
+	// The landing block (blank row, separator, blank row) runs into the fresh
+	// session's AI prompt, which names the model it will answer with (§3.3).
+	out += r.readUntil(t, "ollama/llama3.1:8b", waitTimeout)
+	assertFreshSwitchBlock(t, out, id2)
 
 	p.Write([]byte("chat two\r"))
 	r.readUntil(t, "mock isolated reply", waitTimeout)
