@@ -1,6 +1,8 @@
 # build artifacts
 /rysh
 /rysh.exe
+cmd/rysh/rysh
+cmd/rysh/rysh.exe
 /bin/
 /dist/
 # python
