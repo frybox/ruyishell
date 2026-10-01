@@ -592,7 +592,7 @@ func (e *engine) streamRound(ctx context.Context, req []provider.ChatMessage) (t
 
 		var sb strings.Builder
 		var midErr error
-		emitted := false
+		realTextEmitted := false
 		for tok := range ch {
 			switch {
 			case tok.Err != nil:
@@ -603,8 +603,14 @@ func (e *engine) streamRound(ctx context.Context, req []provider.ChatMessage) (t
 				usage = tok.Usage
 			default:
 				e.sink.OnText(tok.Text, tok.Reasoning)
-				emitted = true
+				// Only non-reasoning text is committed to this
+				// round's reply (sb). A thinking model emits
+				// reasoning long before any real token, so a
+				// reset mid-thinking must abandon and retry the
+				// round rather than treat the emitted thinking as
+				// an on-screen reply that cannot be re-requested.
 				if !tok.Reasoning {
+					realTextEmitted = true
 					sb.WriteString(tok.Text)
 				}
 			}
@@ -614,7 +620,7 @@ func (e *engine) streamRound(ctx context.Context, req []provider.ChatMessage) (t
 				return "", nil, nil, ctx.Err()
 			}
 			wait, retryable := retryWait(midErr, attempt, e.cfg)
-			if retryable && !emitted && attempt < e.cfg.RetryAttempts {
+			if retryable && !realTextEmitted && attempt < e.cfg.RetryAttempts {
 				attempt++
 				e.sink.OnStatus(fmt.Sprintf("流式响应中断（%s），%.1fs 后重试（%d/%d）",
 					briefErr(midErr), wait.Seconds(), attempt, e.cfg.RetryAttempts))
@@ -627,7 +633,7 @@ func (e *engine) streamRound(ctx context.Context, req []provider.ChatMessage) (t
 				}
 				continue
 			}
-			if !emitted {
+			if !realTextEmitted {
 				// Nothing arrived before the break: the round failed.
 				return "", nil, nil, midErr
 			}

@@ -488,6 +488,34 @@ func TestRunRetryAndPartialStream(t *testing.T) {
 		}
 	})
 
+	t.Run("retries when break comes after only reasoning", func(t *testing.T) {
+		inner := &mockClient{t: t}
+		inner.rounds = append(inner.rounds,
+			func(n int, req []provider.ChatMessage, o *provider.ChatOptions) (string, []provider.ToolCall, *provider.Usage, error) {
+				return "reasoned past the break", nil, nil, nil
+			},
+		)
+		// A thinking model emits a long reasoning block (visible on
+		// screen as thinking...) before any real token, then the wire
+		// resets. The emitted reasoning must NOT count as an already
+		// visible reply, so the round is abandoned and retried.
+		raw := &breakClient{t: t, breakOn: 1, reasoning: "let me think about it for a while", inner: inner}
+		sink := &recSink{}
+		res := Run(context.Background(), Input{Client: raw, Prompt: "hi", Cfg: fastCfg(t.TempDir())}, sink)
+		if res.Err != nil {
+			t.Fatalf("run failed: %v", res.Err)
+		}
+		if len(raw.calls) != 2 {
+			t.Fatalf("ChatStream calls = %d, want 2 (break after reasoning retried)", len(raw.calls))
+		}
+		if got := res.Messages[len(res.Messages)-1].Msg.Content; got != "reasoned past the break" {
+			t.Fatalf("final = %q, want the recovered reply", got)
+		}
+		if len(sink.status) == 0 || !strings.Contains(sink.status[0], "流式响应中断") {
+			t.Fatalf("mid-stream break retry status missing, got %q", sink.status)
+		}
+	})
+
 	t.Run("gives up after the retry budget", func(t *testing.T) {
 		raw := &breakClient{t: t, breakOn: 0} // break every request
 		res := Run(context.Background(), Input{Client: raw, Prompt: "hi", Cfg: fastCfg(t.TempDir())}, nil)
@@ -503,13 +531,16 @@ func TestRunRetryAndPartialStream(t *testing.T) {
 
 // breakClient breaks one (or every) stream: breakOn selects the 1-based
 // call number to fail, 0 breaks all. A broken call emits only an error
-// token, optionally after one partial text delta.
+// token, optionally after one partial text delta, or one reasoning delta
+// first (for reasoning/thinking models that emit long before any real
+// token).
 type breakClient struct {
-	t       *testing.T
-	breakOn int
-	partial string
-	inner   StreamClient
-	calls   [][]provider.ChatMessage
+	t          *testing.T
+	breakOn    int
+	partial    string
+	reasoning  string
+	inner      StreamClient
+	calls      [][]provider.ChatMessage
 }
 
 func (b *breakClient) ChatStream(ctx context.Context, msgs []provider.ChatMessage, opts ...provider.ChatOption) (<-chan provider.StreamToken, error) {
@@ -518,6 +549,9 @@ func (b *breakClient) ChatStream(ctx context.Context, msgs []provider.ChatMessag
 		return b.inner.ChatStream(ctx, msgs, opts...)
 	}
 	ch := make(chan provider.StreamToken, 2)
+	if b.reasoning != "" {
+		ch <- provider.StreamToken{Reasoning: true, Text: b.reasoning}
+	}
 	if b.partial != "" {
 		ch <- provider.StreamToken{Text: b.partial}
 	}
