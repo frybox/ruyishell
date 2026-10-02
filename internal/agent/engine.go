@@ -91,7 +91,7 @@ type Config struct {
 	Subs           *SubagentManager
 	Approval       *Approval
 	RetryBase      time.Duration // default 2s
-	RetryAttempts  int           // default 3
+	RetryAttempts  int           // default 8
 	RetryCap       time.Duration // default 30s
 	ContextWindow  int
 	Now            func() time.Time
@@ -241,7 +241,7 @@ func Run(ctx context.Context, in Input, sink Sink) RunResult {
 		e.cfg.RetryBase = 2 * time.Second
 	}
 	if e.cfg.RetryAttempts <= 0 {
-		e.cfg.RetryAttempts = 3
+		e.cfg.RetryAttempts = 8
 	}
 	if e.cfg.RetryCap <= 0 {
 		e.cfg.RetryCap = 30 * time.Second

@@ -1547,6 +1547,9 @@ func run(targetID string, startInAI bool) int {
 			Subs:           subMgr,
 			Approval:       approval,
 			ContextWindow:  spec.Model.ContextWindow,
+			RetryAttempts:  cfgNow.Agent.RetryAttemptsInt(),
+			RetryBase:      cfgNow.Agent.RetryBaseDur(),
+			RetryCap:       cfgNow.Agent.RetryCapDur(),
 		}
 		// §16 manager model: the top-level run carries the delegation
 		// tools. A worker's base is the lean twin of the manager's — cwd,
@@ -2993,8 +2996,20 @@ func (s *streamSink) OnNotice(text string) {
 }
 
 // OnStatus reports transient request state (retry countdowns). The bottom
-// status row it once fed is gone on the main screen, so it is a no-op now.
-func (s *streamSink) OnStatus(text string) {}
+// status row it once fed is gone on the main screen, so it renders as a dim
+// noticeLine in the stream (the main-screen model's "degrade to a dim
+// noticeLine" path) and re-arms the spinner, so a retry wait is visible
+// exactly where the output will arrive instead of a dead stream.
+func (s *streamSink) OnStatus(text string) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	wasSpinning := s.clearSpinner()
+	os.Stdout.WriteString(screen.DimGray() + text + screen.ColorReset + "\r\n")
+	s.logWrite("noti", aiui.Sanitize(text))
+	if wasSpinning {
+		s.armSpinner("")
+	}
+}
 
 // OnAssistant persists a finalized assistant turn (its text plus the native
 // tool calls it requested) atomically into the session log as one asw

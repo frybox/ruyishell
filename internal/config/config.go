@@ -85,6 +85,16 @@ type AgentConfig struct {
 	// work still runs free). Re-read per task like the rest of [agent], so
 	// edits apply to the next run.
 	Approval *string `toml:"approval"`
+	// RetryAttempts is the §11.1 per-round retry budget: how many retries
+	// follow a failed request before the round (and thus the run) dies.
+	// nil → 8; values below 1 clamp to 1.
+	RetryAttempts *int `toml:"retry_attempts"`
+	// RetryBase is the §11.1 backoff base in seconds: wait_n = base × 2^n
+	// (capped by retry_cap, ±25% jitter). nil → 2; values below 1 clamp to 1.
+	RetryBase *int `toml:"retry_base"`
+	// RetryCap is the §11.1 per-step backoff cap in seconds. nil → 30;
+	// values below 1 clamp to 1.
+	RetryCap *int `toml:"retry_cap"`
 }
 
 // BashTimeoutDur resolves the §8.1 default timeout.
@@ -118,6 +128,42 @@ func (a *AgentConfig) AutoBackgroundDur() time.Duration {
 		return 0
 	}
 	return time.Duration(*a.AutoBackground) * time.Second
+}
+
+// RetryAttemptsInt resolves the §11.1 per-round retry budget. nil → 8;
+// values below 1 clamp to 1.
+func (a *AgentConfig) RetryAttemptsInt() int {
+	if a.RetryAttempts == nil {
+		return 8
+	}
+	if *a.RetryAttempts < 1 {
+		return 1
+	}
+	return *a.RetryAttempts
+}
+
+// RetryBaseDur resolves the §11.1 backoff base. nil → 2s; values below 1
+// clamp to 1s.
+func (a *AgentConfig) RetryBaseDur() time.Duration {
+	if a.RetryBase == nil {
+		return 2 * time.Second
+	}
+	if *a.RetryBase < 1 {
+		return time.Second
+	}
+	return time.Duration(*a.RetryBase) * time.Second
+}
+
+// RetryCapDur resolves the §11.1 per-step backoff cap. nil → 30s; values
+// below 1 clamp to 1s.
+func (a *AgentConfig) RetryCapDur() time.Duration {
+	if a.RetryCap == nil {
+		return 30 * time.Second
+	}
+	if *a.RetryCap < 1 {
+		return time.Second
+	}
+	return time.Duration(*a.RetryCap) * time.Second
 }
 
 // ApprovalMode resolves the §7.2 permission mode: "ask" (default) reads

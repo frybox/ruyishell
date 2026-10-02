@@ -413,9 +413,11 @@ M4：^C 取消整个任务。M7：
 
 ### 11.1 provider 重试
 
-- 可重试：429 / 5xx / 网络错误（连接失败、读超时、SSE 断流）。策略：指数退避 2s×2 + ±25% 抖动，单步 30s 上限，最多 3 次，尊重 `Retry-After`（opencode 同款参数）。
+- 可重试：429 / 5xx / 网络错误（连接失败、读超时、SSE 断流）。策略：指数退避 2s×2 + ±25% 抖动，单步 30s 上限，最多 8 次（`retry_attempts` 可配，§13），尊重 `Retry-After`（opencode 同款参数）。
 - 不可重试：context-overflow（走 §10.3）、401/403（直接报错，提示检查密钥）。
-- 重试期间屏幕状态行显示 `重试中 2/3`；流中断已渲染的半成品回复保留（标注 `[响应中断，重试中]`，crush OnRetry 语义的简化：不擦屏，append-only 流内自然保留）。
+- 重试期间屏幕以暗色 noticeLine 落一行 `请求失败（…），N.Ns 后重试（k/8）`（主屏模型无底部状态行，降级为滚动流内一行 + 重新 arm spinner，见顶部 2026-08-30 现状同步）；流中断已渲染的半成品回复保留（不擦屏，append-only 流内自然保留）。
+
+> **已实现说明（2026-09-01，§11.1 重试预算）**：`retry_attempts` 缺省 3 → **8**（`retry_base`/`retry_cap` 亦可配，`[agent]` 指针区分未配与显式 0，缺省 2s/30s）。缘由："连接被重置 / read: connection reset by peer"这类**偶尔抖动**会连吃满 3 次（~14s 退避窗口全落在抖动期内）后整任务 `rysh: …` 报废；8 次把预算摊到 ~2.5 分钟（2/4/8/16/30/30/30/30s），撑得过去。代价：服务**真**挂时任务挂满 ~2.5 分钟才报错（原来 ~14s），可按环境调小。`OnStatus` 不再是 no-op——重试行以暗色 noticeLine 落滚动流并重新 arm spinner。主任务与子任务走同一条 `streamRound`，共享此预算。
 
 ### 11.2 对话有效性修复
 
@@ -540,6 +542,9 @@ approval = "ask"               # "ask"（缺省）| "auto"
 bash_timeout = 60              # 单命令缺省超时（秒）
 bash_max_timeout = 600         # 模型可上调的上限（秒）
 auto_background_after = 60     # 自动转后台阈值（秒，0=禁用）
+retry_attempts = 8             # §11.1 每轮重试预算（次，缺省 8）
+retry_base = 2                 # §11.1 退避基数（秒，缺省 2；wait_n = base×2^n）
+retry_cap = 30                 # §11.1 单步退避上限（秒，缺省 30）
 max_jobs = 50
 context_soft_limit = 0.85      # 压缩触发点（context_window 的比例）
 disabled_tools = []            # 按名禁用工具（安全/弱模型场景）

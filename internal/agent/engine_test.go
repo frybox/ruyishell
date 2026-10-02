@@ -523,7 +523,7 @@ func TestRunRetryAndPartialStream(t *testing.T) {
 			t.Fatal("a persistently breaking stream must fail the run")
 		}
 		// 1 initial + RetryAttempts retries, then the round fails.
-		if want := 1 + 3; len(raw.calls) != want {
+		if want := 1 + 8; len(raw.calls) != want {
 			t.Fatalf("ChatStream calls = %d, want %d (retry budget exhausted)", len(raw.calls), want)
 		}
 	})
