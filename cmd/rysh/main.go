@@ -960,12 +960,13 @@ func run(targetID string, startInAI bool) int {
 	}
 
 	// Tab completion (first word only). /-candidates come from the static
-	// command list. /model and /resume with the cursor right after the
-	// space show their numbered list (model list / session list) instead
-	// of inserting, so the user can type the number directly. Multiple
-	// matches get one dim notice line and then silent cycling; any draft
-	// edit resets the cycle, and the inserted text is undoable.
-	slashCmds := []string{"/exit", "/help", "/history", "/ls", "/model", "/new", "/quit", "/resume"}
+	// command list — every command /help lists. /model and /resume with
+	// the cursor right after the space show their numbered list (model
+	// list / session list) instead of inserting, so the user can type
+	// the number directly. Multiple matches get one dim notice line and
+	// then silent cycling; any draft edit resets the cycle, and the
+	// inserted text is undoable.
+	slashCmds := []string{"/approve", "/exit", "/help", "/history", "/ls", "/model", "/new", "/quit", "/resume"}
 	// printStreamLinesLocked prints notice lines into the stream where the
 	// input line stood, then redraws the prompt below them. writeMu must be
 	// held by the caller. List rows are plain text in normal color; a row
