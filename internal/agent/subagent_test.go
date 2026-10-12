@@ -255,7 +255,7 @@ func TestSubagentWrapFlag(t *testing.T) {
 	sub := sm.Get(id)
 	<-sub.Wait()
 	st := sub.Status()
-	for _, want := range []string{"强制收尾", wrapReasonLoop, "验收需格外严格"} {
+	for _, want := range []string{"模型卡住", "反复执行同一命令没有进展", "验收需格外严格"} {
 		if !strings.Contains(st, want) {
 			t.Fatalf("wrapped status missing %q:\n%s", want, st)
 		}

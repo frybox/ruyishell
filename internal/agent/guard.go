@@ -80,7 +80,21 @@ const regroupInstruction = "[rysh] 检测到长时间只读探索且没有产出
 // wrapUpInstruction is injected as a user message to force the final,
 // text-only answer when the task must stop. Its Chinese wording doubles as
 // the marker integration mocks watch for.
-const wrapUpInstruction = "[rysh] 本任务的执行预算已到极限（原因：%s）。请立即停止调用工具，不要再输出任何 shell 围栏代码块。基于以上全部信息，直接输出：① 已完成的工作；② 关键发现与修改；③ 未完成的部分与下一步建议。"
+const wrapUpInstruction = "[rysh] 检测到模型卡住了：%s。请立即停止调用工具，不要再输出任何 shell 围栏代码块。基于以上全部信息，直接输出：① 已完成的工作；② 关键发现与修改；③ 未完成的部分与下一步建议。"
+
+// wrapPhenomenon maps the wrap reason to the human/model-facing symptom.
+// The screen and the wrap-up instruction say "模型卡住了" plus this — no
+// budget metaphor.
+func wrapPhenomenon(reason string) string {
+	switch reason {
+	case wrapReasonLoop:
+		return "反复执行同一命令没有进展"
+	case wrapReasonReadChurn:
+		return "反复重读同一文件没有产出"
+	default:
+		return reason
+	}
+}
 
 // entry kinds for the shared window. Read/write classification: registry
 // ReadOnly tools are reads, write/edit are writes, and bash is classified

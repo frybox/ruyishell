@@ -501,7 +501,7 @@ func TestRunLoopGuardWrapsButCollectsSubsFirst(t *testing.T) {
 			case n == 1:
 				return "", []provider.ToolCall{{ID: "m1", Name: "task",
 					Arguments: `{"description":"干活","prompt":"干活并汇报"}`}}, nil, nil
-			case strings.Contains(body, "执行预算已到极限"):
+			case strings.Contains(body, "模型卡住"):
 				// The wrap-up instruction is in: text-only.
 				return "wrapping up now", nil, nil, nil
 			default:
@@ -537,7 +537,7 @@ func TestRunLoopGuardWrapsButCollectsSubsFirst(t *testing.T) {
 		t.Fatal("final request missing the worker's report")
 	}
 	notices := strings.Join(sink.notices, "\n")
-	if !strings.Contains(notices, "wrapping up (loop guard)") {
+	if !strings.Contains(notices, "模型卡住了：反复执行同一命令没有进展") {
 		t.Fatalf("wrap notice missing, got %q", notices)
 	}
 	if !strings.Contains(notices, "等待子任务") {

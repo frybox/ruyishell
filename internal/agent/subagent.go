@@ -373,7 +373,7 @@ func (s *Subagent) TerminalLine() string {
 	case "done":
 		line := fmt.Sprintf("[task %d] done · %d 步 · %s", s.id, s.steps, HumanDuration(dur))
 		if s.wrap != "" {
-			line += fmt.Sprintf(" · 被强制收尾（%s）", s.wrap)
+			line += fmt.Sprintf(" · 模型卡住（%s）", wrapPhenomenon(s.wrap))
 		}
 		if s.report != "" {
 			line += " · " + humanSize(len(s.report)) + " 报告"
@@ -449,7 +449,7 @@ func (s *Subagent) Status() string {
 	default:
 		head := fmt.Sprintf("[task %d] 已完成 · %d 步 · %s", s.id, s.steps, HumanDuration(s.durationLocked()))
 		if s.wrap != "" {
-			head += fmt.Sprintf("\n注意：该子任务被守卫强制收尾（%s），报告可疑，验收需格外严格", s.wrap)
+			head += fmt.Sprintf("\n注意：该子任务模型卡住（%s），报告可疑，验收需格外严格", wrapPhenomenon(s.wrap))
 		}
 		if s.err != "" {
 			head += "\n（请求错误: " + s.err + "）"

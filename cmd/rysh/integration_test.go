@@ -2322,7 +2322,7 @@ func TestAgentToolLoopGuard(t *testing.T) {
 
 		var chunks []string
 		ans := "still exploring"
-		if strings.Contains(string(body), "执行预算已到极限") {
+		if strings.Contains(string(body), "模型卡住") {
 			ans = "WRAPPED_UP_DONE"
 		} else {
 			chunks = []string{bashCallChunk(fmt.Sprintf("call_%d", n), "echo LOOP_AGENT")}
@@ -2362,7 +2362,7 @@ id = "llama3.1:8b"
 	// out if the loop never terminates). 6 is agent.loopBreakConsec (§6.4).
 	const loopBreakConsec = 6
 	p.Write([]byte("explore\r"))
-	out := r.readUntil(t, "wrapping up (loop guard)", waitTimeout)
+	out := r.readUntil(t, "模型卡住了：反复执行同一命令没有进展", waitTimeout)
 	if got := strings.Count(out, "[tool] $ echo LOOP_AGENT (exit 0)"); got != loopBreakConsec {
 		t.Fatalf("expected %d tool executions before wrap-up, screen shows %d:\n%q", loopBreakConsec, got, out)
 	}

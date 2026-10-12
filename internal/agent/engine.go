@@ -798,10 +798,11 @@ func (e *engine) maybeSelfCheck(req []provider.ChatMessage) bool {
 // next wrap round, and that one ends the run — the workers are
 // settled by then.
 func (e *engine) startWrap() {
-	e.sink.OnNotice("─── wrapping up (" + e.wrap + ") ───")
+	phen := wrapPhenomenon(e.wrap)
+	e.sink.OnNotice("─── 模型卡住了：" + phen + " ───")
 	e.wrapRound = true
 	e.turn = append(e.turn, TurnMsg{
-		Msg: provider.ChatMessage{Role: "user", Content: fmt.Sprintf(wrapUpInstruction, e.wrap)},
+		Msg: provider.ChatMessage{Role: "user", Content: fmt.Sprintf(wrapUpInstruction, phen)},
 	})
 }
 

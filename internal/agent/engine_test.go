@@ -247,7 +247,7 @@ func TestRunLoopGuardStopsAtSix(t *testing.T) {
 		t.Fatalf("wrap-up round must answer the disobedient call with %q, got %q", notRunWrap, last.Msg.Content)
 	}
 	joined := strings.Join(sink.notices, "\n")
-	if !strings.Contains(joined, "wrapping up (loop guard)") {
+	if !strings.Contains(joined, "模型卡住了：反复执行同一命令没有进展") {
 		t.Fatalf("wrap notice missing, got %q", joined)
 	}
 	// Warnings ride on executed results from the second consecutive run
@@ -314,7 +314,7 @@ func TestRunReadChurnRegroupThenWrap(t *testing.T) {
 	if res.Steps != 6 {
 		t.Fatalf("Steps = %d, want 6 (5 churn rounds + wrap-up)", res.Steps)
 	}
-	if !strings.Contains(strings.Join(sink.notices, "\n"), "wrapping up (read churn)") {
+	if !strings.Contains(strings.Join(sink.notices, "\n"), "模型卡住了：反复重读同一文件没有产出") {
 		t.Fatalf("wrap notice missing, got %q", sink.notices)
 	}
 	fed := 0
