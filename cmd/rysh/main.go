@@ -364,9 +364,11 @@ func run(targetID string, startInAI bool) int {
 	// (~/.rysh/sessions/<id>/messages.log) that is the session's source of
 	// truth on disk; the screen is only the live window over it.
 	var active = struct {
-		meta *session.Meta
-		hist []ctxMsg
-		log  *session.Log
+		meta           *session.Meta
+		hist           []ctxMsg
+		log            *session.Log
+		window         int // active model's context window (tokens, 0 = unconfigured)
+		lastPromptSize int // last run's final request size in tokens (reported or estimated)
 	}{meta: activeMeta}
 	var activeLogMu sync.Mutex
 
@@ -822,12 +824,15 @@ func run(targetID string, startInAI bool) int {
 				uiT.Get("help_resume"),
 				uiT.Get("help_model"),
 				uiT.Get("help_approve"),
+				uiT.Get("help_context"),
 				uiT.Get("help_quit"),
 				uiT.Get("help_help"),
 				uiT.Get("help_tab"),
 				uiT.Get("help_paste"),
 				uiT.Get("help_bang"),
 			}, nil
+		case "/context":
+			return contextUsageLines(active.hist, active.window, active.lastPromptSize, uiT), nil
 		default:
 			return []string{"unknown command: " + fields[0]}, nil
 		}
@@ -967,7 +972,7 @@ func run(targetID string, startInAI bool) int {
 	// the number directly. Multiple matches get one dim notice line and
 	// then silent cycling; any draft edit resets the cycle, and the
 	// inserted text is undoable.
-	slashCmds := []string{"/approve", "/exit", "/help", "/history", "/ls", "/model", "/new", "/quit", "/resume"}
+	slashCmds := []string{"/approve", "/context", "/exit", "/help", "/history", "/ls", "/model", "/new", "/quit", "/resume"}
 	// printStreamLinesLocked prints notice lines into the stream where the
 	// input line stood, then redraws the prompt below them. writeMu must be
 	// held by the caller. List rows are plain text in normal color; a row
@@ -1626,6 +1631,11 @@ func run(targetID string, startInAI bool) int {
 			active.hist = append(active.hist, turn...)
 		}
 		active.hist = trimHistory(active.hist, maxHistory)
+		// /context's data: the active model's window and this run's final
+		// request size (reported or estimated), so a later /context in the
+		// mainloop can report them without re-resolving the model.
+		active.window = spec.Model.ContextWindow
+		active.lastPromptSize = res.LastPromptSize
 		writeMu.Unlock()
 	}
 
@@ -2717,6 +2727,48 @@ func chatMessages(cs []ctxMsg) []provider.ChatMessage {
 		out[i] = cs[i].Msg
 	}
 	return out
+}
+
+// contextUsageLines renders /context: the window (with an estimate note
+// when the model names none), the last run's real request size, the
+// driver's current chars/4 estimate, occupancy, the self-check band, and
+// the message count. hist is the session's in-memory conversation (already
+// under writeMu at the caller).
+func contextUsageLines(hist []ctxMsg, window, lastPromptSize int, t i18n.T) []string {
+	var chars int
+	for _, cm := range hist {
+		chars += len(cm.Msg.Content)
+	}
+	est := chars / 4
+	size := lastPromptSize
+	if est > size {
+		size = est
+	}
+	win, estimated := agent.EstimWindow(window)
+	note := ""
+	if estimated {
+		note = t.Get("ctx_est_note")
+	}
+	lines := []string{
+		t.Get("ctx_window", win, note),
+		t.Get("ctx_last", lastPromptSize),
+		t.Get("ctx_est", est),
+		t.Get("ctx_occ", size, win, size*100/win),
+	}
+	level, detail := agent.SelfCheckBand(size, win, len(hist))
+	label := t.Get("ctx_band_ok")
+	if level == 1 {
+		label = t.Get("ctx_band_l1")
+	} else if level == 2 {
+		label = t.Get("ctx_band_l2")
+	}
+	if level == 0 {
+		lines = append(lines, t.Get("ctx_band_none", label))
+	} else {
+		lines = append(lines, t.Get("ctx_band", label, detail))
+	}
+	lines = append(lines, t.Get("ctx_msgs", len(hist)))
+	return lines
 }
 
 // timelineItem is one element of the merged shell/AI context stream: either

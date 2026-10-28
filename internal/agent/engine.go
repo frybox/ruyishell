@@ -179,6 +179,7 @@ type RunResult struct {
 	CompletionTokens int
 	CachedTokens     int
 	ToolCalls        int            // tool invocations executed by this run (top-level)
+	LastPromptSize   int            // last request's prompt size in tokens (reported or estimated)
 	Compacted        *CompactResult // the last compaction's checkpoint + cut point
 	Err              error
 }
@@ -292,6 +293,7 @@ func Run(ctx context.Context, in Input, sink Sink) RunResult {
 		CompletionTokens: e.completionTokens,
 		CachedTokens:     e.cachedTokens,
 		ToolCalls:        e.toolCalls,
+		LastPromptSize:   e.lastPromptSize,
 		Compacted:        compactedResult(e.compact),
 		Err:              e.fatal,
 	}
@@ -335,9 +337,13 @@ type engine struct {
 	// started (foreign leftovers; a worker's own engine sees its
 	// siblings), so only this run's spawns gate it. subEndStreak counts
 	// consecutive text-only rounds while own workers run: the first gets
-	// a nudge, the second the engine collects the reports itself.
+	// a nudge, the second the engine collects the reports itself. The
+	// gate's second half: todoNudged is the one-shot nudge for a final
+	// answer while todos are still unfinished — the second text-only
+	// round passes through (the model decides, no repetition).
 	subBase      map[int]bool
 	subEndStreak int
+	todoNudged   bool // one-shot: the run was nudged for unfinished todos
 
 	wrapRound bool // the next round is the forced wrap-up round
 
@@ -444,6 +450,14 @@ func (e *engine) run(ctx context.Context) {
 				if ctx.Err() != nil {
 					return
 				}
+				continue
+			}
+			if !e.todoNudged && !e.todosDone() {
+				// First attempt to end while the todo list still has
+				// unfinished items: nudge once, then let the model
+				// decide (the second text-only round passes through).
+				e.todoNudged = true
+				e.nudgeTodo()
 				continue
 			}
 			return // final answer
@@ -757,29 +771,15 @@ func (e *engine) maybeSelfCheck(req []provider.ChatMessage) bool {
 	if e.lastPromptSize > size {
 		size = e.lastPromptSize
 	}
-	level, detail := 0, ""
-	switch {
-	case e.cfg.ContextWindow > 0:
-		pct := size * 100 / e.cfg.ContextWindow
-		if e.selfCheck == 0 && pct >= selfCheckL1Pct {
-			level, detail = 1, fmt.Sprintf("约 %d%% 的窗口（%d/%d tokens）", pct, size, e.cfg.ContextWindow)
-		} else if e.selfCheck == 1 && pct >= selfCheckL2Pct {
-			level, detail = 2, fmt.Sprintf("约 %d%% 的窗口（%d/%d tokens）", pct, size, e.cfg.ContextWindow)
-		}
-	case e.selfCheck == 0 && size >= selfCheckL1Est:
-		level, detail = 1, fmt.Sprintf("约 %d tokens", size)
-	case e.selfCheck == 1 && size >= selfCheckL2Est:
-		level, detail = 2, fmt.Sprintf("约 %d tokens", size)
-	}
-	if level == 0 && e.selfCheck == 0 {
-		if msgs := len(e.in.Base) + len(e.turn); msgs >= selfCheckMsgs {
-			level, detail = 1, fmt.Sprintf("%d 条消息", msgs)
-		}
-	}
-	if level == 0 {
+	// Stateless band vs. the level already injected: the levels escalate
+	// one at a time (a run at level 0 lands on 1 even when the size
+	// already sits in band 2 — the consolidation order comes next round).
+	band, detail := SelfCheckBand(size, e.cfg.ContextWindow, len(e.in.Base)+len(e.turn))
+	if band <= e.selfCheck {
 		return false
 	}
-	e.selfCheck = level
+	e.selfCheck++
+	level := e.selfCheck
 	if level == 1 {
 		e.sink.OnNotice("─── self-check：上下文变重 ───")
 		e.turn = append(e.turn, TurnMsg{Msg: provider.ChatMessage{Role: "user", Content: fmt.Sprintf(selfCheckNote1, detail)}})
@@ -839,6 +839,31 @@ func subIDsLabel(ids []int) string {
 		parts[i] = fmt.Sprintf("task %d", id)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// todoNudge is the one-shot attempt-to-end nudge: the run's todo list still
+// has unfinished items, so the final answer would skip the work — the
+// model is told to keep going (and to update the list when items land).
+const todoNudge = "[rysh] todo 清单还有未完成项：现在结束会跳过这些工作。请继续推进——每完成一项就更新清单，全部 completed 后再收尾；如果清单本身已过时（剩余项实际已做完或不再需要），先把清单更新到符合实际，再结束。"
+
+// todosDone reports whether the run's todo list is empty or fully
+// completed — the final-answer gate's pass condition. An empty list means
+// the run never planned, which is fine: the gate only holds runs whose
+// own list still has work.
+func (e *engine) todosDone() bool {
+	for _, td := range e.task.Todos() {
+		if td.Status != "completed" {
+			return false
+		}
+	}
+	return true
+}
+
+// nudgeTodo tells the model (on screen and in the request) that the run
+// cannot end while its todos are unfinished.
+func (e *engine) nudgeTodo() {
+	e.sink.OnNotice("─── todo 清单有未完成项 ───")
+	e.turn = append(e.turn, TurnMsg{Msg: provider.ChatMessage{Role: "user", Content: todoNudge}})
 }
 
 // nudgeSubWait tells the model (on screen and in the request) that the run

@@ -80,6 +80,44 @@ func (e *engine) windowTokens() int {
 	return compactEstWindow
 }
 
+// SelfCheckBand classifies a request size against the §16 self-check
+// thresholds: 0 = nothing fires, 1 = vigilance nudge band, 2 =
+// consolidation order band. window 0 runs the fixed token estimates
+// instead of percentages, and the raw message count is the "异常多"
+// half on either path. Stateless: it reports which band the size sits in
+// right now, so both the engine's one-shot escalation (fire only when
+// the band is higher than the level already injected) and the driver's
+// /context display call it.
+func SelfCheckBand(size, window, msgs int) (level int, detail string) {
+	switch {
+	case window > 0:
+		pct := size * 100 / window
+		switch {
+		case pct >= selfCheckL2Pct:
+			level, detail = 2, fmt.Sprintf("约 %d%% 的窗口（%d/%d tokens）", pct, size, window)
+		case pct >= selfCheckL1Pct:
+			level, detail = 1, fmt.Sprintf("约 %d%% 的窗口（%d/%d tokens）", pct, size, window)
+		}
+	case size >= selfCheckL2Est:
+		level, detail = 2, fmt.Sprintf("约 %d tokens", size)
+	case size >= selfCheckL1Est:
+		level, detail = 1, fmt.Sprintf("约 %d tokens", size)
+	}
+	if level == 0 && msgs >= selfCheckMsgs {
+		level, detail = 1, fmt.Sprintf("%d 条消息", msgs)
+	}
+	return level, detail
+}
+
+// EstimWindow returns the window to display and measure against: the
+// configured one, or the fixed estimate (flagged) when the model has none.
+func EstimWindow(window int) (int, bool) {
+	if window > 0 {
+		return window, false
+	}
+	return compactEstWindow, true // = selfCheckL2Est
+}
+
 // absorbWindow raises the window to the limit the provider named in its
 // overflow refusal. The error body is the only always-fresh source of the
 // real limit — it tracks a server restarted with a different -c, which a
