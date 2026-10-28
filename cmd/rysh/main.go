@@ -19,6 +19,7 @@ import (
 	"golang.org/x/term"
 
 	"ruyishell/internal/agent"
+	"ruyishell/internal/agentsmd"
 	"ruyishell/internal/aiui"
 	"ruyishell/internal/config"
 	"ruyishell/internal/cwd"
@@ -1500,6 +1501,9 @@ func run(targetID string, startInAI bool) int {
 		if env != "" {
 			base = append(base, agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: "env:\n" + env}})
 		}
+		if inst := agentsmd.Discover(cwd); inst != "" {
+			base = append(base, agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: inst}})
+		}
 		base = append(base, agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: agent.Instructions}})
 		shellVerbatim, shellFolded := foldShellEvents(events)
 		for _, it := range buildTimeline(shellVerbatim, hist, shellFolded) {
@@ -1564,6 +1568,9 @@ func run(targetID string, startInAI bool) int {
 		}
 		if env != "" {
 			subBase = append(subBase, agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: "env:\n" + env}})
+		}
+		if inst := agentsmd.Discover(cwd); inst != "" {
+			subBase = append(subBase, agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: inst}})
 		}
 		subBase = append(subBase, agent.TurnMsg{Msg: provider.ChatMessage{Role: "system", Content: agent.WorkerInstructions}})
 		snap := agent.SubagentSnapshot{Client: client, NativeTools: spec.ToolsEnabled(), Base: subBase, Cfg: runCfg}
