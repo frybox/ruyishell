@@ -365,7 +365,11 @@ func readHistory(dir, id string) []ctxMsg {
 // become role:"tool" messages carrying the call id they answer (paired with
 // the ToolCalls the asw record carried), and shell command/output records
 // (shk/shl) fold into the content of the NEXT user message so the commands
-// the user ran sit inside the turn they preceded. Everything else
+// the user ran sit inside the turn they preceded. A compact record (a
+// finished compaction's checkpoint) drops everything rebuilt so far and
+// starts the history from the checkpoint message — the same shrunk shape
+// the in-memory history takes after a compaction, so a reload cannot
+// resurrect the summarized-away prefix. Everything else
 // (noti/sys/srea/sasw/…) is dropped. The result is trimmed to maxHistory.
 // The internal roles are the session's own shape (the display replay keys
 // off them); the wire shape is enforced at the provider boundary, where a
@@ -436,6 +440,22 @@ func reconstructHistory(recs []session.Record) []ctxMsg {
 			if line := strings.TrimRight(rec.P, "\n"); strings.TrimSpace(line) != "" {
 				shellBuf = append(shellBuf, line)
 			}
+		case "compact":
+			// A compaction checkpoint stands in for the prefix it absorbed
+			// (M7.6): drop everything rebuilt so far — the summarized-away
+			// turn is no longer part of the conversation the model sees —
+			// and restart the history from the checkpoint message, exactly
+			// as the driver's in-memory shrink does after a compaction.
+			// Without this the rebuilt history would re-feed the whole
+			// summarized prefix (or, when the log has already rotated it
+			// away, lose the checkpoint entirely and start from nothing).
+			flush()
+			shellBuf = nil
+			hist = nil
+			hist = append(hist, ctxMsg{
+				TurnMsg: agent.TurnMsg{Msg: agent.CheckpointMessage(rec.P)},
+				ts:      time.Unix(0, rec.Ts),
+			})
 		}
 	}
 	flush()

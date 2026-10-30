@@ -737,6 +737,91 @@ func TestReconstructHistoryFoldsShellIntoNextUser(t *testing.T) {
 	}
 }
 
+// A compact record (a finished compaction's checkpoint) drops the prefix it
+// absorbed and restarts the history from the checkpoint message, so a reload
+// cannot resurrect the summarized-away pre-compaction turns.
+func TestReconstructHistoryHonorsCompact(t *testing.T) {
+	recs := []session.Record{
+		{Ts: 1000, Kind: "usr", P: "summarized prompt"},
+		{Ts: 2000, Kind: "asw", P: "summarized reply"},
+		{Ts: 3000, Kind: "compact", P: "CHECKPOINT TEXT"},
+		{Ts: 4000, Kind: "usr", P: "after compaction"},
+		{Ts: 5000, Kind: "asw", P: "fresh reply"},
+	}
+	hist := reconstructHistory(recs)
+	var got []string
+	for _, m := range hist {
+		got = append(got, m.Msg.Role+":"+m.Msg.Content)
+	}
+	want := []string{
+		"user:" + agent.CheckpointMessage("CHECKPOINT TEXT").Content,
+		"user:after compaction",
+		"assistant:fresh reply",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("reconstructHistory = %v, want %v", got, want)
+	}
+	// The summarized-away prefix must not reappear.
+	for _, m := range hist {
+		if strings.Contains(m.Msg.Content, "summarized") {
+			t.Fatalf("rebuilt history kept the summarized-away prefix: %q", m.Msg.Content)
+		}
+	}
+}
+
+// A second compaction replaces the first checkpoint: only the newest one
+// stands in for the history, like the driver's in-memory shrink.
+func TestReconstructHistoryLatestCompactWins(t *testing.T) {
+	recs := []session.Record{
+		{Ts: 1000, Kind: "usr", P: "one"},
+		{Ts: 2000, Kind: "compact", P: "FIRST"},
+		{Ts: 3000, Kind: "usr", P: "two"},
+		{Ts: 4000, Kind: "compact", P: "SECOND"},
+		{Ts: 5000, Kind: "usr", P: "three"},
+	}
+	hist := reconstructHistory(recs)
+	if len(hist) != 2 {
+		t.Fatalf("reconstructHistory returned %d messages, want 2", len(hist))
+	}
+	if hist[0].Msg.Content != agent.CheckpointMessage("SECOND").Content {
+		t.Fatalf("checkpoint = %q, want the newest (SECOND)", hist[0].Msg.Content)
+	}
+	if hist[1].Msg.Content != "three" {
+		t.Fatalf("tail = %q, want three", hist[1].Msg.Content)
+	}
+}
+
+// A rebuild from disk must never shrink the live history: the log rotates
+// and drops old generations, and a failed read returns nil, so a naive
+// "always take the rebuild" silently loses context on every entry to AI
+// mode. The rebuilt list is taken only when it does not shrink.
+func TestMergeRebuiltHistoryKeepsLonger(t *testing.T) {
+	msg := func(role, content string) ctxMsg {
+		return ctxMsg{TurnMsg: agent.TurnMsg{Msg: provider.ChatMessage{Role: role, Content: content}}}
+	}
+	live := []ctxMsg{msg("user", "a"), msg("assistant", "b"), msg("user", "c")}
+	// A shorter (rotated) rebuild, or an empty one from a failed read,
+	// leaves the live history untouched.
+	if got := mergeRebuiltHistory(live, []ctxMsg{msg("user", "c")}); len(got) != 3 {
+		t.Fatalf("mergeRebuiltHistory with a truncated rebuild = %d messages, want 3", len(got))
+	}
+	if got := mergeRebuiltHistory(live, nil); len(got) != 3 {
+		t.Fatalf("mergeRebuiltHistory with an empty rebuild = %d messages, want 3", len(got))
+	}
+	// A rebuild that is at least as long wins: it carries what a
+	// subprocess appended.
+	disk := append(append([]ctxMsg{}, live...), msg("assistant", "d"))
+	if got := mergeRebuiltHistory(live, disk); len(got) != 4 || got[3].Msg.Content != "d" {
+		t.Fatalf("mergeRebuiltHistory with a longer rebuild = %v, want the 4-message disk list", got)
+	}
+	// Same length: the rebuild is authoritative (it may reflect a
+	// subprocess rewrite).
+	same := []ctxMsg{msg("user", "a"), msg("assistant", "b"), msg("user", "c2")}
+	if got := mergeRebuiltHistory(live, same); got[2].Msg.Content != "c2" {
+		t.Fatalf("mergeRebuiltHistory with an equal-length rebuild = %v, want the disk version", got)
+	}
+}
+
 // The control channel round-trips switch requests: writeControlSwitch
 // appends to $RYSH_CTL, readControlRequests parses and truncates them so
 // each request is processed once.

@@ -1100,8 +1100,9 @@ func run(targetID string, startInAI bool) int {
 		rec.Abort()
 		// Rebuild the conversation context from the session log so a
 		// subprocess (rysh ai) that wrote to this session, or a switch,
-		// is reflected in what the model sees next.
-		active.hist = readSessionHistory(active.meta.ID)
+		// is reflected in what the model sees next. mergeRebuiltHistory
+		// refuses a rebuild that would shrink what we already hold.
+		active.hist = mergeRebuiltHistory(active.hist, readSessionHistory(active.meta.ID))
 		ai.SetHistory(userInputsFor(active.meta.ID))
 		writeMu.Unlock()
 		if shared != "" {
@@ -2838,6 +2839,21 @@ func foldShellEvents(events []session.ShellEvent) ([]session.ShellEvent, string)
 		lines = append(lines, events[i].Fold())
 	}
 	return verbatim, strings.Join(lines, "\n")
+}
+
+// mergeRebuiltHistory decides what a disk rebuild contributes to the live
+// in-memory history on entry to AI mode. The log rotates at ~1MB and keeps
+// only two generations, so a long session's oldest records are gone from
+// disk, and a failed read comes back nil; taking the rebuild
+// unconditionally would therefore drop context the process still holds.
+// The rebuilt list wins when it is at least as long (a subprocess wrote to
+// the session, or it matches what we have); otherwise the in-memory history
+// is kept.
+func mergeRebuiltHistory(cur, rebuilt []ctxMsg) []ctxMsg {
+	if len(rebuilt) >= len(cur) {
+		return rebuilt
+	}
+	return cur
 }
 
 // trimHistory keeps only the most recent max messages, trimming whole turns
