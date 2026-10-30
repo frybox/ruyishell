@@ -193,6 +193,30 @@ func (m *JobManager) startProcess(dir, command string) *Job {
 	return j
 }
 
+// StartBackground launches command as a tracked background job, as if a
+// turned-background bash call had produced it. The interactive shell never
+// needs it (the bash tool is the only producer), but the /jobs slash
+// command needs a real job to be testable without the whole engine, and a
+// user-facing job surface needs one way in that does not go through a
+// model turn. Returns the job and its id.
+func (m *JobManager) StartBackground(dir, command string) (*Job, int) {
+	j := m.startProcess(dir, command)
+	return j, m.register(j)
+}
+
+// CommandSummary is the job's shell snippet on one line, whitespace
+// collapsed and cut to max runes, for one-row lists (/jobs): the raw
+// Command keeps the user's own line breaks and length, which would make
+// a row span several terminal lines.
+func (j *Job) CommandSummary(max int) string {
+	s := strings.Join(strings.Fields(j.Command), " ")
+	r := []rune(s)
+	if max > 0 && len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
+}
+
 // register admits a started job under an id, evicting the oldest job when
 // the cap is hit — the oldest finished one first, else the oldest running
 // one is killed (§8.2 names idle eviction; killing a running job is the

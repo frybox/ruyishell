@@ -825,6 +825,7 @@ func run(targetID string, startInAI bool) int {
 				uiT.Get("help_model"),
 				uiT.Get("help_approve"),
 				uiT.Get("help_context"),
+				uiT.Get("help_jobs"),
 				uiT.Get("help_quit"),
 				uiT.Get("help_help"),
 				uiT.Get("help_tab"),
@@ -833,6 +834,11 @@ func run(targetID string, startInAI bool) int {
 			}, nil
 		case "/context":
 			return contextUsageLines(active.hist, active.window, active.lastPromptSize, uiT), nil
+		case "/jobs":
+			// The prompt badge points here when a job survives its turn
+			// (drawAIPromptLocked); the command formats and returns, so it
+			// never blocks while writeMu is held.
+			return jobsCommand(jobMgr, fields, uiT), nil
 		default:
 			return []string{"unknown command: " + fields[0]}, nil
 		}
@@ -981,7 +987,7 @@ func run(targetID string, startInAI bool) int {
 	// the number directly. Multiple matches get one dim notice line and
 	// then silent cycling; any draft edit resets the cycle, and the
 	// inserted text is undoable.
-	slashCmds := []string{"/approve", "/context", "/exit", "/help", "/history", "/ls", "/model", "/new", "/quit", "/resume"}
+	slashCmds := []string{"/approve", "/context", "/exit", "/help", "/history", "/jobs", "/ls", "/model", "/new", "/quit", "/resume"}
 	// printStreamLinesLocked prints notice lines into the stream where the
 	// input line stood, then redraws the prompt below them. writeMu must be
 	// held by the caller. List rows are plain text in normal color; a row
