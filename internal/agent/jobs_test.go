@@ -87,6 +87,35 @@ func TestJobKill(t *testing.T) {
 	}
 }
 
+// RunningCount is the prompt badge's source: it counts the tracked jobs
+// that are still alive, so the prompt can say work is going on behind it
+// (§8 — a job outlives the task that started it). It must be non-blocking
+// and must drop to 0 once a job finishes.
+func TestJobManagerRunningCount(t *testing.T) {
+	jm := NewJobManager()
+	if n := jm.RunningCount(); n != 0 {
+		t.Fatalf("RunningCount with no jobs = %d, want 0", n)
+	}
+	live := jm.startProcess("", sleepCmd(2))
+	jm.register(live)
+	if n := jm.RunningCount(); n != 1 {
+		t.Fatalf("RunningCount with one live job = %d, want 1", n)
+	}
+	// A finished job stays tracked but no longer counts.
+	finished := jm.startProcess("", "exit 0")
+	waitJob(t, finished)
+	jm.register(finished)
+	if n := jm.RunningCount(); n != 1 {
+		t.Fatalf("RunningCount with a finished job tracked = %d, want 1", n)
+	}
+	// Once the live one ends the badge clears.
+	live.Kill()
+	waitJob(t, live)
+	if n := jm.RunningCount(); n != 0 {
+		t.Fatalf("RunningCount after the job ended = %d, want 0", n)
+	}
+}
+
 func TestJobManagerCapEviction(t *testing.T) {
 	jm := NewJobManager()
 	for i := 0; i < jobMax; i++ {

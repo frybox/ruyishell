@@ -961,6 +961,15 @@ func run(targetID string, startInAI bool) int {
 	drawAIPromptLocked := func() {
 		dir := currentCWD(shellPid())
 		prompt, pw := screen.PSExpandModel(cfg.AIPrompt(modelRef), dir, modelRef)
+		// A background job outlives the task that started it (§8), so the
+		// prompt is the only surface that can tell the user work is still
+		// running behind it. The badge is a plain dim suffix — drawn on
+		// every redraw (finalize, notice lines, model/session switches) so
+		// it appears and clears without any extra plumbing, and it never
+		// waits on the job: the job's lifetime is independent of the turn.
+		if n := jobMgr.RunningCount(); n > 0 {
+			prompt += screen.DimGray() + uiT.Get("jobs_running", n) + screen.ColorReset + " "
+		}
 		ai.BeginInput(prompt, pw)
 		ai.RenderInput(func(s string) { os.Stdout.WriteString(s) }, width)
 	}

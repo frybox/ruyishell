@@ -252,6 +252,27 @@ func (m *JobManager) List() []*Job {
 	return out
 }
 
+// RunningCount reports how many tracked jobs are still alive. The driver
+// calls it when drawing the prompt: a job outlives the task that started
+// it (§8), so the prompt is the only place that can tell the user work is
+// still going on in the background. Non-blocking — a job's lifetime is
+// independent of the agent turn, so the prompt must never wait on it.
+func (m *JobManager) RunningCount() int {
+	m.mu.Lock()
+	jobs := make([]*Job, 0, len(m.order))
+	for _, id := range m.order {
+		jobs = append(jobs, m.jobs[id])
+	}
+	m.mu.Unlock()
+	n := 0
+	for _, j := range jobs {
+		if !j.Done() {
+			n++
+		}
+	}
+	return n
+}
+
 // StopAll kills every running job (rysh shutdown path).
 func (m *JobManager) StopAll() {
 	m.mu.Lock()
